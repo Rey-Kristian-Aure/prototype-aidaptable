@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="AiDaptable topic scheduler, quiz coverage, and adaptive recalibration prototype"
+    />
+    <title>AiDaptable — Topic Scheduler</title>
+    <link rel="stylesheet" href="css/styles.css" />
+  </head>
+  <body>
+    <header class="app-header">
+      <div class="brand-block">
+        <div class="brand-mark" aria-hidden="true">A</div>
+        <div class="brand-copy">
+          <h1>AiDaptable</h1>
+          <p>Topic Scheduler &amp; Adaptive Recalibration</p>
+        </div>
+      </div>
+
+      <nav class="view-tabs" aria-label="Main views">
+        <button type="button" class="view-tab" data-view="setup">Setup</button>
+        <button type="button" class="view-tab" data-view="calendar">Calendar</button>
+      </nav>
+
+      <div class="header-actions">
+        <span id="dirty-badge" class="dirty-badge hidden">Unsaved changes</span>
+        <button id="btn-undo" class="btn ghost" type="button">Undo</button>
+        <button id="btn-discard" class="btn ghost" type="button">Discard</button>
+        <button id="btn-accept" class="btn primary" type="button">Accept &amp; Save</button>
+        <button id="btn-demo" class="btn subtle" type="button">Load Demo</button>
+        <button id="btn-reset" class="btn subtle" type="button">Reset</button>
+      </div>
+    </header>
+
+    <main id="app-main">
+      <section id="setup-view" class="view" aria-label="Setup"></section>
+
+      <section id="calendar-view" class="view hidden" aria-label="Calendar">
+        <div id="calendar-toolbar" class="calendar-toolbar"></div>
+        <div
+          id="warning-banner"
+          class="warning-banner hidden"
+          role="status"
+          aria-live="polite"
+        ></div>
+        <div class="calendar-layout">
+          <div class="calendar-main">
+            <div id="calendar-legend" class="calendar-legend"></div>
+            <div id="calendar-grid" class="calendar-grid-container"></div>
+          </div>
+          <aside
+            id="async-sidebar"
+            class="async-sidebar"
+            aria-label="Asynchronous topics"
+          ></aside>
+        </div>
+      </section>
+    </main>
+
+    <div id="popover-root"></div>
+    <div id="toast-root" class="toast-root" aria-live="polite"></div>
+    <div id="change-summary-root"></div>
+
+    <dialog id="app-modal" class="app-modal">
+      <div class="modal-panel">
+        <div class="modal-top">
+          <h2 id="modal-title"></h2>
+          <button id="modal-close" type="button" class="icon-button" aria-label="Close dialog">
+            ×
+          </button>
+        </div>
+        <div id="modal-body" class="modal-body"></div>
+        <div id="modal-actions" class="modal-actions"></div>
+      </div>
+    </dialog>
+
+    <script type="module" src="js/ui.js"></script>
+  </body>
+</html>
