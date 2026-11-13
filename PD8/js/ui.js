@@ -69,9 +69,17 @@ import {
   getQuizCoverage,
   getQuizCoverageWarnings
 } from "./quiz-coverage.js";
+import {
+  focusQuizBinImportForQuiz,
+  initQuizBinView,
+  quizBinHasInsights,
+  renderQuizBinView,
+  unlinkQuizBinImports
+} from "./quiz-bin-view.js";
 
 const setupView = document.getElementById("setup-view");
 const calendarView = document.getElementById("calendar-view");
+const quizBinView = document.getElementById("quiz-bin-view");
 const calendarToolbar = document.getElementById("calendar-toolbar");
 const calendarLegend = document.getElementById("calendar-legend");
 const calendarGrid = document.getElementById("calendar-grid");
@@ -206,6 +214,7 @@ function renderChrome() {
   });
   setupView.classList.toggle("hidden", currentView !== "setup");
   calendarView.classList.toggle("hidden", currentView !== "calendar");
+  quizBinView?.classList.toggle("hidden", currentView !== "quiz-bin");
   dirtyBadge.classList.toggle("hidden", !dirty);
   undoButton.disabled = !appState.history.length;
   discardButton.disabled = !dirty;
@@ -218,6 +227,8 @@ function renderAll() {
   renderChrome();
   if (currentView === "setup") {
     renderSetup();
+  } else if (currentView === "quiz-bin") {
+    renderQuizBinView();
   } else {
     renderCalendarView();
   }
@@ -290,7 +301,7 @@ function discardChanges() {
 }
 
 function switchView(view) {
-  if (view !== "setup" && view !== "calendar") {
+  if (view !== "setup" && view !== "calendar" && view !== "quiz-bin") {
     return;
   }
   if (view !== "setup" && hasUnsavedTopicDrafts()) {
@@ -519,6 +530,11 @@ function renderSetup() {
                 ${quizCoverageChip(quiz)}
               </div>
               <div class="row-actions">
+                ${
+                  quizBinHasInsights(quiz.id)
+                    ? `<button class="btn small" type="button" data-action="view-quiz-insights" data-quiz-id="${quiz.id}">Insights</button>`
+                    : ""
+                }
                 ${
                   coverage.warnings.length
                     ? `<button class="btn small" type="button" data-action="review-quiz-coverage" data-quiz-id="${quiz.id}">Review</button>`
@@ -1566,6 +1582,7 @@ function requestDeleteQuiz(quizId) {
       const next = cloneState(appState);
       next.quizzes = next.quizzes.filter((item) => item.id !== quizId);
       restoreCellAfterQuiz(next, quiz.date);
+      unlinkQuizBinImports(quizId);
       commitState(next, `Deleted ${quiz.title}`, {
         save: true,
         staleIfScheduled: hasSchedule(appState),
@@ -2691,6 +2708,10 @@ function handleSetupClick(event) {
     }
   } else if (action === "delete-quiz") {
     requestDeleteQuiz(button.dataset.quizId);
+  } else if (action === "view-quiz-insights") {
+    if (focusQuizBinImportForQuiz(button.dataset.quizId)) {
+      switchView("quiz-bin");
+    }
   } else if (action === "generate") {
     requestGenerate();
   }
@@ -2779,6 +2800,13 @@ function init() {
     ? startOfMonth(today)
     : startOfMonth(appState.semester.startDate);
   bindEvents();
+  initQuizBinView({
+    showToast,
+    getContext: () => ({
+      quizzes: appState.quizzes,
+      topics: appState.topics
+    })
+  });
   if (!hasLocalStorage() && !storageWarningShown) {
     storageWarningShown = true;
     showToast("Browser storage is unavailable. Changes will last only until this tab closes.", "danger");
