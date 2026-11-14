@@ -3029,7 +3029,7 @@ input[type="range"] {
 }
 
 .qb-map-table {
-  min-width: 900px;
+  min-width: 940px;
   table-layout: fixed;
 }
 
@@ -3048,7 +3048,7 @@ input[type="range"] {
 }
 
 .qb-map-col-type {
-  width: 190px;
+  width: 210px;
 }
 
 .qb-map-col-points {

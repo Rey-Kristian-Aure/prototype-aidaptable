@@ -6,6 +6,7 @@ import {
   detectColumns,
   detectDelimiter,
   detectQuestionType,
+  isIgnoredQuestionHeader,
   normalizeTimestamp,
   parseCSV,
   parsePoints,
@@ -19,6 +20,10 @@ const sampleText = readFileSync(
 );
 const nameQuestionText = readFileSync(
   new URL("./fixtures/albay-quiz.csv", import.meta.url),
+  "utf8"
+);
+const allTypesText = readFileSync(
+  new URL("./fixtures/gform-all-types.csv", import.meta.url),
   "utf8"
 );
 
@@ -177,6 +182,62 @@ test("detectQuestionType recognizes fill-in-the-blank and short answers", () => 
     detectQuestionType("Select all that apply: ___", [], -1),
     "multiple"
   );
+});
+
+test("detectQuestionType recognizes paragraph, grid, date, and time questions", () => {
+  const parsed = parseCSV(allTypesText);
+  const columns = detectColumns(parsed.headers);
+  assert.deepEqual(
+    columns.questionColumns.map((column) =>
+      detectQuestionType(column.header, parsed.rows, column.index)
+    ),
+    [
+      "single",
+      "paragraph",
+      "single",
+      "multiple",
+      "single",
+      "grid-single",
+      "grid-single",
+      "grid-multiple",
+      "grid-multiple",
+      "date",
+      "time"
+    ]
+  );
+  assert.equal(
+    detectQuestionType(
+      "Select all municipalities in Albay. [Legazpi]",
+      [["Camalig;Malilipot"]],
+      0
+    ),
+    "grid-multiple"
+  );
+  assert.equal(
+    detectQuestionType(
+      "Match the item to its category [Mayon]",
+      [["Volcano"]],
+      0
+    ),
+    "grid-single"
+  );
+});
+
+test("detectColumns skips rating and file-upload questions with their score columns", () => {
+  const parsed = parseCSV(allTypesText);
+  const columns = detectColumns(parsed.headers);
+  assert.equal(columns.questionColumns.length, 11);
+  assert.deepEqual(
+    columns.ignoredColumns.map((column) => column.header),
+    [
+      "Rate your familiarity with Albay (1-5).",
+      "Rate the quiz difficulty.",
+      "Upload a photo of Mayon."
+    ]
+  );
+  assert.deepEqual(columns.warnings, []);
+  assert.equal(isIgnoredQuestionHeader("Rate of reaction"), false);
+  assert.equal(isIgnoredQuestionHeader("Which file format is this?"), false);
 });
 
 test("detectColumns does not mistake [Score] companions for the total score", () => {

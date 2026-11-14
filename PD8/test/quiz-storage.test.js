@@ -192,20 +192,30 @@ test("normalizeQuizBinState drops manual answer keys and topics", () => {
   assert.equal(normalized.imports[0].grading.inferredKeyCount, 1);
 });
 
-test("normalizeQuizBinState preserves short-answer question types", () => {
+test("normalizeQuizBinState preserves all supported question types", () => {
+  const types = [
+    "single",
+    "short",
+    "paragraph",
+    "multiple",
+    "grid-single",
+    "grid-multiple",
+    "date",
+    "time"
+  ];
   const normalized = normalizeQuizBinState({
     imports: [
       makeImport("qb1", "2026-01-01T00:00:00.000Z", {
         questions: [
-          {
-            id: "qb1-q1",
-            prompt: "Fill in the blank",
-            type: "short",
+          ...types.map((type, index) => ({
+            id: `qb1-q${index + 1}`,
+            prompt: `Question ${index + 1}`,
+            type,
             points: 1,
             graded: true
-          },
+          })),
           {
-            id: "qb1-q2",
+            id: "qb1-q99",
             prompt: "Unknown type",
             type: "essay",
             points: 1,
@@ -217,7 +227,7 @@ test("normalizeQuizBinState preserves short-answer question types", () => {
   });
   assert.deepEqual(
     normalized.imports[0].questions.map((question) => question.type),
-    ["short", "single"]
+    [...types, "single"]
   );
 });
 

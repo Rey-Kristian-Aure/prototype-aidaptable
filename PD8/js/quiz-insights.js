@@ -1,3 +1,5 @@
+import { isMultipleQuestionType } from "./quiz-csv.js";
+
 const EPSILON = 0.01;
 
 function clamp(value, min, max) {
@@ -143,7 +145,7 @@ function acceptedAnswerKeys(question) {
   ) {
     return { singles: new Set(), combos: new Set() };
   }
-  if (question.type === "multiple") {
+  if (isMultipleQuestionType(question.type)) {
     return {
       singles: new Set(),
       combos: new Set(question.correctAnswers.map(canonical))
@@ -156,7 +158,7 @@ function acceptedAnswerKeys(question) {
 }
 
 function answerMatchesKey(question, raw, keys) {
-  if (question.type === "multiple") {
+  if (isMultipleQuestionType(question.type)) {
     return keys.combos.has(canonical(raw));
   }
   return keys.singles.has(normalize(raw));
@@ -201,7 +203,7 @@ function buildAnswerGroups(question, responses) {
 }
 
 function buildOptionGroups(question, responses) {
-  if (question.type !== "multiple") {
+  if (!isMultipleQuestionType(question.type)) {
     return [];
   }
   const counts = new Map();
@@ -284,7 +286,7 @@ function correctAnswerText(question) {
   ) {
     return "";
   }
-  if (question.type === "multiple") {
+  if (isMultipleQuestionType(question.type)) {
     return question.correctAnswers
       .map((value) => splitValues(value).join(", "))
       .join(" / ");
@@ -505,8 +507,8 @@ export function computeQuizInsights(record) {
       (question) => question.answerKeySource === "inferred"
     ).length,
     missingKeyCount: missingKeyQuestions.length,
-    multipleAnswerCount: questions.filter(
-      (question) => question.type === "multiple"
+    multipleAnswerCount: questions.filter((question) =>
+      isMultipleQuestionType(question.type)
     ).length
   };
 

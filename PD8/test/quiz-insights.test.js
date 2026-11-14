@@ -21,6 +21,10 @@ const nameQuestionText = readFileSync(
   new URL("./fixtures/albay-quiz.csv", import.meta.url),
   "utf8"
 );
+const allTypesText = readFileSync(
+  new URL("./fixtures/gform-all-types.csv", import.meta.url),
+  "utf8"
+);
 
 function buildImportFromText(text, overrides = {}) {
   const parsed = parseCSV(text);
@@ -169,6 +173,79 @@ test("fill-in-the-blank questions infer keys and group answers like single answe
     false
   );
   assert.equal(insights.questions[0].optionGroups.length, 0);
+});
+
+test("the all-types export imports every supported Google Forms question type", () => {
+  const record = buildImportFromText(allTypesText, {
+    id: "qb-all",
+    title: "All types"
+  });
+  assert.equal(record.questions.length, 11);
+  assert.deepEqual(
+    record.questions.map((question) => question.type),
+    [
+      "single",
+      "paragraph",
+      "single",
+      "multiple",
+      "single",
+      "grid-single",
+      "grid-single",
+      "grid-multiple",
+      "grid-multiple",
+      "date",
+      "time"
+    ]
+  );
+  assert.equal(record.grading.possibleTotal, 9);
+  assert.deepEqual(
+    record.responses.map((response) => response.exportedScore),
+    [7, 6]
+  );
+  assert.deepEqual(
+    record.responses.map((response) => response.computedTotal),
+    [7, 6]
+  );
+  assert.equal(record.grading.scoreMismatches, 0);
+  assert.deepEqual(record.warnings, []);
+
+  const byPrompt = (needle) =>
+    record.questions.find((question) => question.prompt.includes(needle));
+  assert.equal(byPrompt("Describe your experience").type, "paragraph");
+  assert.equal(byPrompt("Describe your experience").graded, false);
+  assert.equal(byPrompt("When did you last visit").type, "date");
+  assert.equal(byPrompt("When did you last visit").graded, false);
+  assert.equal(byPrompt("At what time").type, "time");
+  assert.equal(byPrompt("At what time").graded, false);
+
+  const matchMayon = byPrompt("Match the item to its category [Mayon]");
+  assert.equal(matchMayon.type, "grid-single");
+  assert.deepEqual(matchMayon.correctAnswers, ["Volcano"]);
+  assert.equal(
+    byPrompt("Match the item to its category [Pinangat]").answerKeySource,
+    "none"
+  );
+
+  const attributesMayon = byPrompt("Select the attributes of each [Mayon]");
+  assert.equal(attributesMayon.type, "grid-multiple");
+  assert.deepEqual(attributesMayon.correctAnswers, ["Active;Perfect cone"]);
+  assert.deepEqual(attributesMayon.correctOptions, [
+    "Active",
+    "Perfect cone"
+  ]);
+  assert.deepEqual(
+    byPrompt("Select the attributes of each [Legazpi]").correctAnswers,
+    ["City;Port"]
+  );
+
+  const insights = computeQuizInsights(record);
+  assert.equal(insights.summary.multipleAnswerCount, 3);
+  assert.equal(
+    insights.questions.find((question) =>
+      question.prompt.includes("Describe your experience")
+    ).optionGroups.length,
+    0
+  );
 });
 
 test("the sample produces the expected class summary", () => {

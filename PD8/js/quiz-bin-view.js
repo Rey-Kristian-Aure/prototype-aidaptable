@@ -3,6 +3,8 @@ import { openModal } from "./popover.js";
 import {
   detectColumns,
   detectQuestionType,
+  isMultipleQuestionType,
+  isUngradedQuestionType,
   normalizeQuestionType,
   normalizeTimestamp,
   parseCSV,
@@ -38,7 +40,12 @@ const MONTH_NAMES = [
 const QUESTION_TYPES = [
   ["single", "Single answer"],
   ["short", "Short answer / fill-in"],
-  ["multiple", "Multiple answers"]
+  ["paragraph", "Paragraph"],
+  ["multiple", "Multiple answers"],
+  ["grid-single", "Grid row · single"],
+  ["grid-multiple", "Grid row · checkboxes"],
+  ["date", "Date"],
+  ["time", "Time"]
 ];
 function questionTypeLabel(type) {
   return (
@@ -559,7 +566,7 @@ function renderQuestionCard(question) {
         <span><strong>${question.answeredCount}</strong> answered</span>
       </div>
       ${
-        question.type === "multiple"
+        isMultipleQuestionType(question.type)
           ? `<p class="qb-muted">Answer combinations</p>`
           : ""
       }
@@ -998,9 +1005,16 @@ function renderWizardAdvanced() {
       ID columns are excluded automatically; responses stay anonymous.
     </p>
     <p class="qb-note">
-      Single answer and short answer / fill-in treat each response as one answer
-      and infer the key from full-credit responses. Multiple answers split
+      Single answer covers multiple choice and dropdown; multiple answers
+      covers checkboxes. Grid rows are listed separately. Single answer, short
+      answer / fill-in, paragraph, date, time, and grid-single treat each
+      response as one answer; multiple answers and grid checkboxes split
       selections on commas, semicolons, or pipes.
+    </p>
+    <p class="qb-note">
+      Paragraph, date, and time questions are imported without grading unless
+      their score column contains numeric scores. Rating and file-upload
+      questions are skipped automatically.
     </p>
     <div class="qb-table-wrap">
       <table class="qb-table qb-map-table">
@@ -1086,9 +1100,11 @@ function renderWizard() {
   const missingKeys = record.questions.filter(
     (question) => question.graded && question.answerKeySource !== "inferred"
   );
-  const ungraded = record.questions.filter((question) => !question.graded);
-  const multipleCount = record.questions.filter(
-    (question) => question.type === "multiple"
+  const ungraded = record.questions.filter(
+    (question) => !question.graded && !isUngradedQuestionType(question.type)
+  );
+  const multipleCount = record.questions.filter((question) =>
+    isMultipleQuestionType(question.type)
   ).length;
   const inferredCount = record.questions.filter(
     (question) => question.answerKeySource === "inferred"
@@ -1118,7 +1134,7 @@ function renderWizard() {
     ? `<div class="notice info"><span>${ungraded.length} ${plural(
         ungraded.length,
         "question"
-      )} has no exported score and will be shown without grading.</span></div>`
+      )} ${ungraded.length === 1 ? "has" : "have"} no exported score and will be shown without grading.</span></div>`
     : "";
   const warningsNotice = warnings.length
     ? `<div class="qb-warning-list">${warnings

@@ -1,4 +1,6 @@
 import {
+  isMultipleQuestionType,
+  isUngradedQuestionType,
   normalizeQuestionType,
   normalizeTimestamp,
   parsePoints,
@@ -63,7 +65,7 @@ function buildQuestionOptions(rows, index, type) {
     if (!raw) {
       continue;
     }
-    if (type === "multiple") {
+    if (isMultipleQuestionType(type)) {
       values.push(...splitAnswerValues(raw));
     } else {
       values.push(raw);
@@ -131,7 +133,7 @@ function buildResponse(row, rowIndex, questions, options) {
       raw,
       rawScore,
       values:
-        question.type === "multiple"
+        isMultipleQuestionType(question.type)
           ? splitAnswerValues(raw)
           : raw
             ? [raw]
@@ -204,7 +206,7 @@ function inferQuestionKey(question, responses) {
     }
     keyResponseCount += 1;
     const key =
-      question.type === "multiple"
+      isMultipleQuestionType(question.type)
         ? canonicalAnswer(raw)
         : normalizeAnswer(raw);
     if (!accepted.has(key)) {
@@ -218,7 +220,7 @@ function inferQuestionKey(question, responses) {
     : "none";
   question.keyResponseCount = keyResponseCount;
   question.correctOptions =
-    question.type === "multiple"
+    isMultipleQuestionType(question.type)
       ? uniqueStrings(
           question.correctAnswers.flatMap((value) => splitAnswerValues(value))
         )
@@ -285,7 +287,11 @@ export function buildQuizImport({
     const hasUsableScore = scoreIndex !== null && inferredPoints > 0;
     const graded = hasUsableScore;
 
-    if (scoreIndex !== null && inferredPoints === 0) {
+    if (
+      scoreIndex !== null &&
+      inferredPoints === 0 &&
+      !isUngradedQuestionType(type)
+    ) {
       warnings.push(
         `"${draft.header}" has a score column, but no numeric score values were found.`
       );
@@ -341,7 +347,10 @@ export function buildQuizImport({
   const possibleTotal = questions
     .filter((question) => question.graded)
     .reduce((sum, question) => sum + question.points, 0);
-  const ungradedCount = questions.filter((question) => !question.graded).length;
+  const ungradedCount = questions.filter(
+    (question) =>
+      !question.graded && !isUngradedQuestionType(question.type)
+  ).length;
   const inferredKeyCount = questions.filter(
     (question) => question.answerKeySource === "inferred"
   ).length;
