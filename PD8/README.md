@@ -62,6 +62,20 @@ npm test
 - Removing a topic from the setup batch also removes it from every quiz's covered-topic list.
 - The manual **Review coverage** action remains available for unresolved warnings.
 
+## Quiz Bin
+
+- **Quiz Bin** reads the CSV exported from a Google Forms response sheet. In Google Forms, open the quiz, go to **Responses**, and download the responses as CSV. If the browser downloads a ZIP, unzip it first and choose the CSV inside.
+- The importer detects the timestamp, total score, question columns, and any paired `[Score]` and `[Feedback]` columns. It groups each question with its score and feedback companions instead of treating them as separate questions. Name, email, and student ID questions are recognized automatically and excluded from the quiz questions.
+- Exported per-question scores are the primary grading source: `1.00 / 1` is full credit, `0.00 / 1` is no credit, partial values are partial credit, and `-- / 1` is a skipped or unanswered question. When a total score is present, the exported total is authoritative for response percentages and any mismatch with the per-question sum is flagged.
+- The import check offers three question types: **Single answer**, **Short answer / fill-in**, and **Multiple answers**. Single answer and short answer / fill-in treat each response as one text answer, so their keys are inferred from full-credit responses and matched case-insensitively; use short answer / fill-in for fill-in-the-blank, one-word, or brief text responses. Multiple-answer questions split selections on commas, semicolons, or pipes and add option-level analytics. Multiple-answer questions are detected automatically from headers such as “Select all” or “Choose all that apply”, from semicolon-separated answer values, and short-answer questions from headers such as “Fill in the blank”, “Complete the sentence”, or an underscore blank. The detected type can still be changed in the advanced mapping section of the import check.
+- Responses are anonymous. Name, email, and student ID columns are ignored and never stored; responses are labeled `Response 1`, `Response 2`, and so on. Duplicate rows are reported but kept as separate responses.
+- Correct answers are inferred from responses that earned full credit. No manual answer key is needed. If no response earned full credit for a graded question, the report says that no key can be inferred and still shows the score and answer distribution.
+- Importing a CSV linked to a scheduled quiz replaces the existing import for that quiz after confirmation. Re-import preserves the quiz link, title, date, passing threshold, and matching question labels, types, and points. Standalone imports do not replace any scheduled quiz.
+- **Overview** shows response count, average, pass rate, score distribution, frequently missed questions, and responses needing attention. **Questions** shows answer distributions, inferred keys, and option-level analytics for multiple-answer questions. **Responses** sorts and filters anonymous scores and lists missed or skipped questions. **Import notes** is a collapsible section with warnings, mismatches, duplicate rows, and how each question was graded.
+- Frequently missed questions are ranked by missed rate, where wrong, partial-credit, and blank answers all count as missed, then by possible points and question order. The Overview shows the top five; the Questions tab still lists every question.
+- Quiz Bin data is stored separately under the `aidaptable:quizbin` key, so it does not enter the scheduling state or history. Only parsed answers and metadata are stored; the raw CSV is never uploaded or saved. Derived insights are recomputed from the stored answers each time.
+- Deleting a scheduled quiz does not delete its import. The import keeps its title and date snapshot and is marked as no longer linked to a scheduled quiz.
+
 ## Saving
 
 - Semester settings, class times, demo loading, and schedule generation save automatically to `localStorage`.
@@ -81,5 +95,10 @@ npm test
 - `js/storage.js` — browser persistence
 - `js/calendar.js` — calendar, toolbar, legend, allocations, and async sidebar rendering
 - `js/popover.js` — day details, add-time form, and modal helpers
+- `js/quiz-csv.js` — Google Forms CSV parser, delimiter detection, paired score/feedback columns, and score/timestamp parsing
+- `js/quiz-key.js` — import building, anonymous responses, exported-score grading, and inferred answer keys from full-credit responses
+- `js/quiz-insights.js` — class, question, response, option-level, and data-quality aggregations plus CSV exports
+- `js/quiz-storage.js` — separate `aidaptable:quizbin` persistence, schema migration, and normalization
+- `js/quiz-bin-view.js` — Quiz Bin screen, import check, report tabs, import notes, deletion, exports, and quiz-link integration
 - `js/ui.js` — app state, inline topic batch editor, class timetable, calendar actions, summary, and event wiring
-- `test/` — fair-share scheduling, quiz coverage and auto-moves, and recalibration tests
+- `test/` — scheduling, quiz coverage, recalibration, CSV parsing, scoring, insights, and Quiz Bin storage tests
