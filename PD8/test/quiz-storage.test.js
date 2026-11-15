@@ -192,6 +192,22 @@ test("normalizeQuizBinState drops manual answer keys and topics", () => {
   assert.equal(normalized.imports[0].grading.inferredKeyCount, 1);
 });
 
+test("normalizeQuizBinState preserves exported possible totals", () => {
+  const normalized = normalizeQuizBinState({
+    imports: [
+      makeImport("qb1", "2026-01-01T00:00:00.000Z", {
+        grading: {
+          possibleTotal: 0,
+          exportedPossibleTotal: 8,
+          scoreMismatches: 0
+        }
+      })
+    ]
+  });
+  assert.equal(normalized.imports[0].grading.possibleTotal, 0);
+  assert.equal(normalized.imports[0].grading.exportedPossibleTotal, 8);
+});
+
 test("normalizeQuizBinState preserves all supported question types", () => {
   const types = [
     "single",

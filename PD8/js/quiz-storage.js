@@ -163,6 +163,10 @@ function normalizeImport(raw, index) {
         0,
         finiteNumber(source.grading?.possibleTotal, 0) ?? 0
       ),
+      exportedPossibleTotal: Math.max(
+        0,
+        finiteNumber(source.grading?.exportedPossibleTotal, 0) ?? 0
+      ),
       scoreMismatches: Math.max(
         0,
         finiteNumber(source.grading?.scoreMismatches, 0) ?? 0

@@ -28,7 +28,7 @@ const allTypesText = readFileSync(
 
 function buildImportFromText(text, overrides = {}) {
   const parsed = parseCSV(text);
-  const columns = detectColumns(parsed.headers);
+  const columns = detectColumns(parsed.headers, parsed.rows);
   return buildQuizImport({
     id: "qb-sample",
     sourceFileName: "quiz.csv",
@@ -341,7 +341,7 @@ test("partial credit is honored from the exported score", () => {
   assert.equal(insights.questions[0].missedRate, 100);
 });
 
-test("a plain export without per-question scores is shown without grading", () => {
+test("a plain export with only a total score uses score-only grading", () => {
   const headers = ["Timestamp", "Score", "Capital?", "Even numbers?", "Essay"];
   const text = `${headers.join(",")}\n2026/11/13 10:00:00 AM GMT+8,2 / 2,FOUR,"2, 4",Because\n`;
   const record = buildImportFromText(text, {
@@ -385,12 +385,178 @@ test("a plain export without per-question scores is shown without grading", () =
   assert.equal(record.responses[0].answers[0].pointsEarned, 0);
   assert.equal(record.responses[0].answers[0].graded, false);
   assert.equal(insights.summary.gradedQuestionCount, 0);
-  assert.equal(insights.summary.possibleTotal, 0);
+  assert.equal(insights.summary.gradingMode, "score-only");
+  assert.equal(insights.summary.hasScores, true);
+  assert.equal(insights.summary.possibleTotal, 2);
+  assert.equal(insights.summary.average, 100);
+  assert.equal(insights.summary.passRate, 100);
+  assert.equal(insights.summary.pointsLost, 0);
   assert.equal(insights.questions[0].difficulty, "Not graded");
   assert.equal(insights.questions[0].fullCredit, 0);
   assert.equal(insights.questions[0].missedCount, 0);
   assert.equal(insights.questions[0].answerKeySource, "none");
   assert.equal(insights.questions[0].answerGroups[0].answer, "FOUR");
+  assert.equal(insights.responses[0].status, "on-track");
+  assert.equal(insights.responses[0].scoreSource, "exported");
+  assert.equal(insights.responses[0].nearPass, false);
+});
+
+test("an export with no scores avoids pass/fail and at-risk claims", () => {
+  const headers = ["Timestamp", "Capital?", "Essay"];
+  const text = [
+    headers.join(","),
+    "2026/11/13 10:00:00 AM GMT+8,Legazpi City,Because it is the capital",
+    "2026/11/13 10:01:00 AM GMT+8,Tabaco City,"
+  ].join("\n");
+  const record = buildImportFromText(text, {
+    id: "qb-ungraded",
+    title: "Ungraded export",
+    questions: [
+      {
+        index: 1,
+        header: "Capital?",
+        label: "Capital?",
+        scoreIndex: null,
+        feedbackIndex: null,
+        include: true,
+        type: "single",
+        points: 1
+      },
+      {
+        index: 2,
+        header: "Essay",
+        label: "Essay",
+        scoreIndex: null,
+        feedbackIndex: null,
+        include: true,
+        type: "paragraph",
+        points: 1
+      }
+    ]
+  });
+  const insights = computeQuizInsights(record);
+  assert.equal(insights.summary.gradingMode, "not-graded");
+  assert.equal(insights.summary.hasScores, false);
+  assert.equal(insights.summary.possibleTotal, 0);
+  assert.equal(insights.summary.passRate, 0);
+  assert.equal(insights.summary.atRisk, 0);
+  assert.equal(insights.summary.nearPass, 0);
+  assert.equal(insights.summary.pointsLost, 0);
+  assert.equal(insights.responses[0].status, "not-graded");
+  assert.equal(insights.responses[0].statusLabel, "Not graded");
+  assert.equal(insights.responses[0].pointsToPass, null);
+  assert.equal(insights.responses[0].nearPass, false);
+  assert.equal(insights.responses[1].blankQuestions.length, 1);
+  assert.equal(
+    insights.responses[0].answerDetails.find(
+      (detail) => detail.prompt === "Essay"
+    ).state,
+    "recorded"
+  );
+  assert.equal(
+    insights.responses[1].answerDetails.find((detail) => detail.prompt === "Essay")
+      .state,
+    "blank"
+  );
+});
+
+test("points lost, average points, and near-pass use the graded total", () => {
+  const headers = [
+    "Timestamp",
+    "Total score",
+    "Question 1",
+    "Question 1 [Score]"
+  ];
+  const text = [
+    headers.join(","),
+    "2026/11/13 10:00:00 AM GMT+8,7.00 / 10,A,7.00 / 10",
+    "2026/11/13 10:01:00 AM GMT+8,2.00 / 10,B,2.00 / 10",
+    "2026/11/13 10:02:00 AM GMT+8,10.00 / 10,A,10.00 / 10"
+  ].join("\n");
+  const record = buildImportFromText(text, {
+    id: "qb-points",
+    title: "Points",
+    passingPercent: 75
+  });
+  const insights = computeQuizInsights(record);
+  const question = insights.questions[0];
+  assert.equal(question.pointsPossible, 30);
+  assert.equal(question.pointsEarned, 19);
+  assert.equal(question.pointsLost, 11);
+  assert.equal(question.averagePoints, 19 / 3);
+  assert.equal(question.skipRate, 0);
+  assert.equal(question.keyConfidence, "low");
+  assert.equal(insights.summary.pointsLost, 11);
+  assert.equal(insights.summary.averagePoints, 19 / 3);
+  assert.equal(insights.summary.nearPass, 1);
+  assert.equal(insights.summary.belowPass, 2);
+  assert.equal(insights.responses[0].pointsToPass, 0.5);
+  assert.equal(insights.responses[0].nearPass, true);
+  assert.equal(insights.responses[1].pointsToPass, 5.5);
+  assert.equal(insights.responses[1].nearPass, false);
+  assert.equal(insights.responses[2].pointsToPass, 0);
+  assert.equal(insights.responses[2].nearPass, false);
+});
+
+test("key confidence reflects how many responses support an inferred key", () => {
+  const headers = [
+    "Timestamp",
+    "Total score",
+    "Question 1",
+    "Question 1 [Score]"
+  ];
+  const makeImport = (scores) => {
+    const rows = scores.map(
+      (score, index) =>
+        `2026/11/13 10:0${index}:00 AM GMT+8,${score}.00 / 1,A,${score}.00 / 1`
+    );
+    return buildImportFromText([headers.join(","), ...rows].join("\n"), {
+      id: `qb-key-${scores.length}-${scores.join("")}`,
+      title: "Key confidence"
+    });
+  };
+
+  const low = computeQuizInsights(makeImport([1, 0]));
+  assert.equal(low.questions[0].keyConfidence, "low");
+
+  const medium = computeQuizInsights(makeImport([1, 0, 1, 0, 0]));
+  assert.equal(medium.questions[0].keyConfidence, "medium");
+
+  const high = computeQuizInsights(makeImport([1, 1]));
+  assert.equal(high.questions[0].keyConfidence, "high");
+});
+
+test("completion separates blank graded answers from blank ungraded answers", () => {
+  const record = buildImportFromText(allTypesText, {
+    id: "qb-completion",
+    title: "Completion"
+  });
+  const insights = computeQuizInsights(record);
+  assert.equal(insights.summary.completionRate, 100);
+  assert.equal(insights.summary.allCompletionRate, 50);
+  assert.equal(insights.summary.completeResponses, 2);
+  assert.equal(insights.summary.allCompleteResponses, 1);
+  const paragraph = insights.questions.find((question) =>
+    question.prompt.includes("Describe your experience")
+  );
+  assert.equal(paragraph.blank, 1);
+  assert.equal(paragraph.answeredCount, 1);
+  assert.deepEqual(
+    insights.responses[1].blankQuestions.map((item) => item.index + 1),
+    [2]
+  );
+  assert.equal(
+    insights.responses[0].answerDetails.find(
+      (detail) => detail.prompt === paragraph.prompt
+    ).state,
+    "recorded"
+  );
+  assert.equal(
+    insights.responses[1].answerDetails.find(
+      (detail) => detail.prompt === paragraph.prompt
+    ).state,
+    "blank"
+  );
 });
 
 test("duplicate rows are reported but kept as separate anonymous responses", () => {
@@ -486,9 +652,11 @@ test("CSV exports contain anonymous responses and inferred keys", () => {
   const responseCSV = buildResponseCSV(record, insights);
   assert.match(questionCSV, /^number,question,type,points/);
   assert.match(questionCSV, /inferred_answer,answer_key_source/);
+  assert.match(questionCSV, /points_lost,average_points,skip_rate,key_confidence/);
   assert.doesNotMatch(questionCSV, /topic/);
   assert.match(questionCSV, /Over 7600,inferred/);
   assert.match(responseCSV, /^response,submitted,score/);
+  assert.match(responseCSV, /points_to_pass,near_pass,blank_questions/);
   assert.match(responseCSV, /Response 1/);
   assert.match(responseCSV, /Q2; Q5; Q6; Q7; Q8; Q9/);
   assert.doesNotMatch(responseCSV, /email|student/);

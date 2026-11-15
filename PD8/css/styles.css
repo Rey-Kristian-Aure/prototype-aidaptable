@@ -3112,6 +3112,249 @@ input[type="range"] {
   color: var(--danger);
 }
 
+.qb-status.not-graded {
+  border-color: var(--line-strong);
+  background: var(--gray-soft);
+  color: var(--muted);
+}
+
+.qb-status-mix {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.qb-missed-bar {
+  margin: 5px 0 3px;
+}
+
+.qb-missed-bar .qb-bar-track {
+  height: 6px;
+}
+
+.qb-attention-pills {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.qb-key-confidence {
+  flex: 0 0 auto;
+  padding: 3px 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface-muted);
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.qb-key-confidence.high {
+  border-color: #b9e5cc;
+  background: var(--success-soft);
+  color: var(--success);
+}
+
+.qb-key-confidence.medium {
+  border-color: #f0d28a;
+  background: var(--warning-soft);
+  color: var(--warning);
+}
+
+.qb-key-confidence.low {
+  border-color: #f0c58f;
+  background: var(--orange-soft);
+  color: var(--orange);
+}
+
+.qb-key-confidence.none {
+  border-color: var(--line-strong);
+  background: var(--gray-soft);
+  color: var(--muted);
+}
+
+.qb-question-table {
+  min-width: 760px;
+}
+
+.qb-question-table th,
+.qb-question-table td {
+  padding: 7px 9px;
+}
+
+.qb-question-table .qb-qcell {
+  max-width: 320px;
+  min-width: 180px;
+}
+
+.qb-response-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+}
+
+.qb-response-toggle:hover {
+  color: var(--brand);
+}
+
+.qb-response-toggle span {
+  display: grid;
+  width: 18px;
+  height: 18px;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--gray-soft);
+  color: var(--muted);
+  font-size: 0.8rem;
+  line-height: 1;
+}
+
+.qb-table tr.expanded {
+  background: var(--brand-softer);
+}
+
+.qb-response-detail-row td {
+  padding: 0;
+  background: var(--surface-muted);
+}
+
+.qb-table tbody tr.qb-response-detail-row:hover {
+  background: var(--surface-muted);
+}
+
+.qb-response-detail {
+  display: grid;
+  gap: 12px;
+  padding: 14px 16px;
+  border-top: 1px dashed var(--line-strong);
+}
+
+.qb-response-detail-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.qb-response-detail-head p {
+  margin-top: 2px;
+}
+
+.qb-response-detail-table {
+  min-width: 680px;
+}
+
+.qb-response-detail-table td {
+  padding: 7px 9px;
+}
+
+.qb-response-answer {
+  min-width: 160px;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.qb-response-feedback {
+  min-width: 120px;
+  color: var(--muted);
+}
+
+.qb-answer-state {
+  display: inline-flex;
+  padding: 2px 7px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface-muted);
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.qb-answer-state.full {
+  border-color: #b9e5cc;
+  background: var(--success-soft);
+  color: var(--success);
+}
+
+.qb-answer-state.partial {
+  border-color: #f0d28a;
+  background: var(--warning-soft);
+  color: var(--warning);
+}
+
+.qb-answer-state.wrong {
+  border-color: #f2c0bd;
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.qb-answer-state.blank {
+  border-color: var(--line-strong);
+  background: var(--gray-soft);
+  color: var(--muted);
+}
+
+.qb-answer-state.recorded {
+  border-color: #c3d3f8;
+  background: var(--brand-soft);
+  color: var(--brand-dark);
+}
+
+.btn.qb-advanced-toggle {
+  border-color: var(--line-strong);
+  background: var(--surface);
+  color: var(--ink-soft);
+}
+
+.btn.qb-advanced-toggle:hover:not(:disabled) {
+  border-color: #b9cdf8;
+  background: var(--brand-softer);
+  color: var(--brand-dark);
+}
+
+.btn.qb-advanced-toggle[aria-expanded="true"] {
+  border-color: #b9cdf8;
+  background: var(--brand-soft);
+  color: var(--brand-dark);
+}
+
+.qb-advanced-panel {
+  margin-top: 16px;
+  padding: 16px;
+  border: 1px solid var(--line-strong);
+  border-left: 4px solid var(--brand);
+  border-radius: var(--radius-md);
+  background: var(--surface-muted);
+}
+
+.qb-advanced-head {
+  margin-bottom: 12px;
+}
+
+.qb-advanced-head h3 {
+  font-size: 0.95rem;
+}
+
+.qb-advanced-head p {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.qb-advanced-panel .qb-wizard-grid {
+  background: var(--surface);
+}
+
 .qb-topic-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

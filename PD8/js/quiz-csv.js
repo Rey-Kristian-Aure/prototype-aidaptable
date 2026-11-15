@@ -110,7 +110,8 @@ const MULTIPLE_ANSWER_HINTS = [
   /\b(multiple|more than one)\s+(answers?|choices?|options?|selections?)\b/i,
   /\bselect\s+multiple\b/i
 ];
-const CHOICE_LIKE_HEADER = /\b(which|select|choose|check|pick|following)\b/i;
+const COMMA_MULTIPLE_HINT =
+  /\bwhich of the following\b|\b(select|choose|check|pick)\b.*\b(following|subjects?|topics?|items?|options?|answers?|statements?|choices?)\b/i;
 const SHORT_ANSWER_HINTS = [
   /\bfill[\s-]*in[\s-]*(the[\s-]+)?(missing[\s-]+)?(blank|word|phrase)s?\b/i,
   /\bcomplete\s+(the\s+)?(sentence|statement|phrase|blank)\b/i,
@@ -129,8 +130,15 @@ const TIME_VALUE_PATTERN =
   /^(?:\d{1,2}:\d{2}(?::\d{2})?\s*(?:am|pm)?|\d{1,2}\s*(?:am|pm))$/i;
 const RATING_HEADER =
   /\b(?:rate|rating)\s+(?:your|the|this|these)\b|\blinear\s+scale\b|\brating\s+scale\b/i;
+const SCALE_HEADER = /\b(?:on\s+a\s+scale|scale\s+of\s+\d|linear\s+scale)\b/i;
+const SATISFACTION_HEADER =
+  /\bhow\s+(?:satisfied|likely|would\s+you\s+rate|do\s+you\s+rate)\b/i;
 const FILE_UPLOAD_HEADER =
-  /^\s*(?:upload|attach)\b|\bfile\s+upload\b|\b(?:upload|attach)\s+(?:a|an|your|the)\b/i;
+  /^\s*(?:upload|attach)\b|\bfile\s+upload\b|\b(?:upload|attach)\s+(?:a|an|your|the)\b|\badd\s+(?:a|an|your|the)?\s*(?:file|photo|document|image)\b/i;
+const RATING_VALUE_HEADER =
+  /\b(?:rate|rating|scale|satisfied|satisfaction|likely|recommend)\b|\bhow\s+(?:difficult|easy|satisfied|likely)\b/i;
+const FILE_URL_PATTERN =
+  /^https?:\/\/(?:(?:drive|docs)\.google\.com\/|(?:www\.)?\S+\/(?:file|files)\/d\/|\S+\.(?:pdf|docx?|xlsx?|pptx?|png|jpe?g|gif|zip|csv)(?:\?\S*)?$)/i;
 
 export const QUESTION_TYPE_VALUES = [
   "single",
@@ -161,7 +169,12 @@ export function isUngradedQuestionType(value) {
 
 export function isIgnoredQuestionHeader(header) {
   const text = normalizedHeader(header);
-  return RATING_HEADER.test(text) || FILE_UPLOAD_HEADER.test(text);
+  return (
+    RATING_HEADER.test(text) ||
+    SCALE_HEADER.test(text) ||
+    SATISFACTION_HEADER.test(text) ||
+    FILE_UPLOAD_HEADER.test(text)
+  );
 }
 
 function answerValues(rows, index) {
@@ -174,13 +187,10 @@ function answerValues(rows, index) {
 }
 
 function hasMultipleAnswerShape(text, values) {
-  if (MULTIPLE_ANSWER_HINTS.some((pattern) => pattern.test(text))) {
-    return true;
-  }
   if (values.some((value) => /[;|]/.test(value))) {
     return true;
   }
-  if (CHOICE_LIKE_HEADER.test(text)) {
+  if (COMMA_MULTIPLE_HINT.test(text)) {
     const commaRows = values.filter(
       (value) => value.split(",").filter((part) => part.trim()).length >= 2
     );
@@ -205,15 +215,19 @@ export function detectQuestionType(header, rows = [], index = -1) {
   const gridRow = text.match(GRID_ROW_SUFFIX);
 
   if (gridRow) {
-    return hasMultipleAnswerShape(gridRow[1], values)
+    return MULTIPLE_ANSWER_HINTS.some((pattern) => pattern.test(gridRow[1])) ||
+      hasMultipleAnswerShape(gridRow[1], values)
       ? "grid-multiple"
       : "grid-single";
   }
-  if (hasMultipleAnswerShape(text, values)) {
+  if (MULTIPLE_ANSWER_HINTS.some((pattern) => pattern.test(text))) {
     return "multiple";
   }
   if (PARAGRAPH_HINTS.some((pattern) => pattern.test(text))) {
     return "paragraph";
+  }
+  if (hasMultipleAnswerShape(text, values)) {
+    return "multiple";
   }
   if (valuesMatchPattern(values, DATE_VALUE_PATTERN)) {
     return "date";
@@ -345,7 +359,63 @@ export function parseCSV(text) {
   return { headers, rows, delimiter, warnings };
 }
 
-export function detectColumns(headers) {
+function scoreCompanionIndex(headers, header) {
+  return headers.findIndex(
+    (candidate) =>
+      isCompanionHeader(candidate) &&
+      companionKind(candidate) === "score" &&
+      companionBase(candidate) === header
+  );
+}
+
+function hasNumericScoreValues(rows, scoreIndex) {
+  if (scoreIndex < 0) {
+    return false;
+  }
+  return (rows || []).some((row) => {
+    const parsed = parsePoints(row?.[scoreIndex]);
+    return parsed.valid && Number.isFinite(parsed.max) && parsed.max > 0;
+  });
+}
+
+function valuesLookLikeFileUrls(values) {
+  if (!values.length) {
+    return false;
+  }
+  const matches = values.filter((value) => FILE_URL_PATTERN.test(value)).length;
+  return matches >= Math.max(1, Math.ceil(values.length / 2));
+}
+
+function valuesLookLikeSmallIntegers(values) {
+  if (!values.length) {
+    return false;
+  }
+  const matches = values.filter((value) => {
+    if (!/^\d{1,2}$/.test(value)) {
+      return false;
+    }
+    const number = Number(value);
+    return number >= 0 && number <= 10;
+  }).length;
+  return matches >= Math.max(1, Math.ceil(values.length / 2));
+}
+
+function isLikelyIgnoredByValues(header, index, headers, rows) {
+  const values = answerValues(rows, index);
+  if (!values.length) {
+    return false;
+  }
+  const scoreIndex = scoreCompanionIndex(headers, header);
+  if (hasNumericScoreValues(rows, scoreIndex)) {
+    return false;
+  }
+  if (valuesLookLikeFileUrls(values)) {
+    return true;
+  }
+  return RATING_VALUE_HEADER.test(header) && valuesLookLikeSmallIntegers(values);
+}
+
+export function detectColumns(headers, rows = []) {
   const cleaned = headers.map((header, index) => cleanHeader(header, index));
   const warnings = [];
   const timestampIndex = findHeaderIndex(cleaned, isTimestampHeader);
@@ -363,6 +433,25 @@ export function detectColumns(headers) {
       ignoredBases.add(header);
     }
   });
+  if (Array.isArray(rows) && rows.length) {
+    cleaned.forEach((header, index) => {
+      if (
+        isCompanionHeader(header) ||
+        ignoredIndexes.has(index) ||
+        index === timestampIndex ||
+        index === totalScoreIndex ||
+        index === emailIndex ||
+        index === nameIndex ||
+        index === studentIdIndex
+      ) {
+        return;
+      }
+      if (isLikelyIgnoredByValues(header, index, cleaned, rows)) {
+        ignoredIndexes.add(index);
+        ignoredBases.add(header);
+      }
+    });
+  }
   const identityHeaders = new Set(
     [nameIndex, emailIndex, studentIdIndex]
       .filter((index) => index >= 0)

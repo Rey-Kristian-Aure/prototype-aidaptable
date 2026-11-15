@@ -330,15 +330,19 @@ export function buildQuizImport({
     inferQuestionKey(question, responses);
   }
 
-  const scoreMismatches = responses.filter((response) => {
-    if (
-      response.exportedScore === null ||
-      !Number.isFinite(response.exportedScore)
-    ) {
-      return false;
-    }
-    return Math.abs(response.exportedScore - response.computedTotal) > EPSILON;
-  }).length;
+  const scoreMismatches = questions.some((question) => question.graded)
+    ? responses.filter((response) => {
+        if (
+          response.exportedScore === null ||
+          !Number.isFinite(response.exportedScore)
+        ) {
+          return false;
+        }
+        return (
+          Math.abs(response.exportedScore - response.computedTotal) > EPSILON
+        );
+      }).length
+    : 0;
   const unparsableScoreCells = responses.reduce(
     (total, response) => total + response.unparsableScoreCells,
     0
@@ -347,6 +351,10 @@ export function buildQuizImport({
   const possibleTotal = questions
     .filter((question) => question.graded)
     .reduce((sum, question) => sum + question.points, 0);
+  const exportedPossibleTotal = responses.reduce(
+    (max, response) => Math.max(max, Number(response.exportedMax) || 0),
+    0
+  );
   const ungradedCount = questions.filter(
     (question) =>
       !question.graded && !isUngradedQuestionType(question.type)
@@ -358,7 +366,10 @@ export function buildQuizImport({
     (question) => question.graded && question.answerKeySource === "none"
   ).length;
 
-  if (totalScoreIndex < 0) {
+  if (
+    totalScoreIndex < 0 &&
+    !warnings.some((warning) => /No total score column/i.test(warning))
+  ) {
     warnings.push(
       "No total score column was detected. Percentages will be computed from the included questions."
     );
@@ -402,6 +413,7 @@ export function buildQuizImport({
     responses,
     grading: {
       possibleTotal,
+      exportedPossibleTotal,
       scoreMismatches,
       unparsableScoreCells,
       duplicateRows,
