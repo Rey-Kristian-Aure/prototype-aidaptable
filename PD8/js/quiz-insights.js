@@ -1,3 +1,5 @@
+import { isMultipleQuestionType } from "./quiz-csv.js";
+
 const EPSILON = 0.01;
 
 function clamp(value, min, max) {
@@ -79,11 +81,10 @@ function answerIsBlank(answer) {
   if (!answer) {
     return true;
   }
-  return (
-    answer.answered === false ||
-    answer.unanswered === true ||
-    clean(answer.raw) === ""
-  );
+  if (clean(answer.raw) !== "") {
+    return false;
+  }
+  return answer.answered === false || answer.unanswered === true;
 }
 
 function responseScore(response, questions) {
@@ -132,7 +133,24 @@ function statusLabel(status) {
   if (status === "approaching") {
     return "Approaching";
   }
+  if (status === "not-graded") {
+    return "Not graded";
+  }
   return "At risk";
+}
+
+function keyConfidenceFor(question, responseCount) {
+  if (!question.graded || question.answerKeySource !== "inferred") {
+    return "none";
+  }
+  const count = Number(question.keyResponseCount) || 0;
+  if (count <= 1) {
+    return "low";
+  }
+  if (count >= Math.max(2, Math.ceil(responseCount * 0.5))) {
+    return "high";
+  }
+  return "medium";
 }
 
 function acceptedAnswerKeys(question) {
@@ -143,7 +161,7 @@ function acceptedAnswerKeys(question) {
   ) {
     return { singles: new Set(), combos: new Set() };
   }
-  if (question.type === "multiple") {
+  if (isMultipleQuestionType(question.type)) {
     return {
       singles: new Set(),
       combos: new Set(question.correctAnswers.map(canonical))
@@ -156,7 +174,7 @@ function acceptedAnswerKeys(question) {
 }
 
 function answerMatchesKey(question, raw, keys) {
-  if (question.type === "multiple") {
+  if (isMultipleQuestionType(question.type)) {
     return keys.combos.has(canonical(raw));
   }
   return keys.singles.has(normalize(raw));
@@ -201,7 +219,7 @@ function buildAnswerGroups(question, responses) {
 }
 
 function buildOptionGroups(question, responses) {
-  if (question.type !== "multiple") {
+  if (!isMultipleQuestionType(question.type)) {
     return [];
   }
   const counts = new Map();
@@ -284,7 +302,7 @@ function correctAnswerText(question) {
   ) {
     return "";
   }
-  if (question.type === "multiple") {
+  if (isMultipleQuestionType(question.type)) {
     return question.correctAnswers
       .map((value) => splitValues(value).join(", "))
       .join(" / ");
@@ -323,7 +341,10 @@ function buildQuestionInsights(record) {
 
     const responseCount = responses.length;
     const rate = percent(fullCredit, responseCount);
-    const possiblePoints = Number(question.points || 0) * responseCount;
+    const pointsPossible = Number(question.points || 0) * responseCount;
+    const pointsLost = question.graded
+      ? Math.max(0, pointsPossible - pointsEarned)
+      : 0;
     return {
       ...question,
       index,
@@ -338,7 +359,13 @@ function buildQuestionInsights(record) {
         ? percent(responseCount - fullCredit, responseCount)
         : 0,
       rate,
-      averagePointsRate: percent(pointsEarned, possiblePoints),
+      pointsPossible,
+      pointsEarned,
+      pointsLost,
+      averagePoints: responseCount ? pointsEarned / responseCount : 0,
+      skipRate: percent(blank, responseCount),
+      averagePointsRate: percent(pointsEarned, pointsPossible),
+      keyConfidence: keyConfidenceFor(question, responseCount),
       difficulty: question.graded ? difficultyForRate(rate) : "Not graded",
       mostCommonWrong: mostCommonWrongAnswer(question, responses),
       answerGroups: buildAnswerGroups(question, responses),
@@ -370,48 +397,81 @@ function buildQuestionInsights(record) {
   };
 }
 
-function buildResponseInsights(record, questions, passingPercent) {
+function buildResponseInsights(
+  record,
+  questions,
+  passingPercent,
+  gradingMode
+) {
+  const hasScores = gradingMode !== "not-graded";
   return (record.responses || []).map((response, index) => {
     const score = responseScore(response, questions);
-    const status = statusForPercent(score.percent, passingPercent);
+    const status = hasScores
+      ? statusForPercent(score.percent, passingPercent)
+      : "not-graded";
+    const belowPass = hasScores && score.percent < passingPercent;
+    const pointsNeeded =
+      hasScores && score.possible > 0
+        ? (passingPercent / 100) * score.possible - score.score
+        : null;
+    const pointsToPass =
+      pointsNeeded === null
+        ? null
+        : Math.max(0, Math.ceil(pointsNeeded * 100) / 100);
+    const nearPass = belowPass && passingPercent - score.percent <= 10;
     const missed = [];
     const skipped = [];
     const partial = [];
+    const blankQuestions = [];
+    const answerDetails = [];
 
     for (const question of questions) {
-      if (!question.graded) {
-        continue;
-      }
       const answer = responseAnswer(response, question.id);
-      if (answerIsBlank(answer)) {
-        missed.push({
-          index: question.index,
-          questionId: question.id,
-          prompt: question.prompt
-        });
-        skipped.push({
-          index: question.index,
-          questionId: question.id,
-          prompt: question.prompt
-        });
+      const blank = answerIsBlank(answer);
+      const ref = {
+        index: question.index,
+        questionId: question.id,
+        prompt: question.prompt
+      };
+      let state = "not-graded";
+
+      if (blank) {
+        state = "blank";
+        blankQuestions.push(ref);
+      } else if (!question.graded) {
+        state = "recorded";
+      } else if (answer?.correct === true && !answer?.partial) {
+        state = "full";
       } else if (answer?.partial) {
-        missed.push({
-          index: question.index,
-          questionId: question.id,
-          prompt: question.prompt
-        });
-        partial.push({
-          index: question.index,
-          questionId: question.id,
-          prompt: question.prompt
-        });
-      } else if (answer?.correct !== true) {
-        missed.push({
-          index: question.index,
-          questionId: question.id,
-          prompt: question.prompt
-        });
+        state = "partial";
+      } else {
+        state = "wrong";
       }
+
+      if (question.graded) {
+        if (blank) {
+          missed.push(ref);
+          skipped.push(ref);
+        } else if (answer?.partial) {
+          missed.push(ref);
+          partial.push(ref);
+        } else if (answer?.correct !== true) {
+          missed.push(ref);
+        }
+      }
+
+      answerDetails.push({
+        questionId: question.id,
+        index: question.index,
+        prompt: question.prompt,
+        type: question.type,
+        graded: Boolean(question.graded),
+        raw: clean(answer?.raw),
+        feedback: clean(answer?.feedback),
+        pointsEarned: Number(answer?.pointsEarned) || 0,
+        pointsPossible: Number(question.points) || 0,
+        state
+      });
     }
 
     return {
@@ -423,10 +483,14 @@ function buildResponseInsights(record, questions, passingPercent) {
       scoreSource: score.source,
       status,
       statusLabel: statusLabel(status),
-      belowPass: score.percent < passingPercent,
+      belowPass,
+      nearPass,
+      pointsToPass,
       missed,
       skipped,
-      partial
+      partial,
+      blankQuestions,
+      answerDetails
     };
   });
 }
@@ -450,17 +514,63 @@ export function computeQuizInsights(record) {
     ? Number(record.passingPercent)
     : 75;
   const questionData = buildQuestionInsights(record);
+  const gradedQuestions = questions.filter((question) => question.graded);
+  const hasExportedScores = (record.responses || []).some((response) => {
+    const exportedScore = Number(response.exportedScore);
+    const exportedMax = Number(response.exportedMax);
+    return (
+      Number.isFinite(exportedScore) &&
+      Number.isFinite(exportedMax) &&
+      exportedMax > 0
+    );
+  });
+  const gradingMode = gradedQuestions.length
+    ? "questions"
+    : hasExportedScores
+      ? "score-only"
+      : "not-graded";
+  const hasScores = gradingMode !== "not-graded";
   const responseData = buildResponseInsights(
     record,
     questionData.questions,
-    passingPercent
+    passingPercent,
+    gradingMode
   );
   const percents = responseData.map((response) => response.percent);
-  const gradedQuestions = questions.filter((question) => question.graded);
-  const possibleTotal = gradedQuestions.reduce(
+  const gradedPossibleTotal = gradedQuestions.reduce(
     (sum, question) => sum + Number(question.points || 0),
     0
   );
+  const exportedPossibleTotal = responseData.reduce(
+    (max, response) => Math.max(max, Number(response.possible) || 0),
+    0
+  );
+  const possibleTotal =
+    gradingMode === "questions"
+      ? gradedPossibleTotal
+      : gradingMode === "score-only"
+        ? exportedPossibleTotal
+        : 0;
+  const questionPointsLost = questionData.questions.reduce(
+    (sum, question) => sum + question.pointsLost,
+    0
+  );
+  const responsePointsLost = responseData.reduce(
+    (sum, response) => sum + Math.max(0, response.possible - response.score),
+    0
+  );
+  const pointsLost =
+    gradingMode === "questions"
+      ? questionPointsLost
+      : gradingMode === "score-only"
+        ? responsePointsLost
+        : 0;
+  const completeResponses = responseData.filter(
+    (response) => response.skipped.length === 0
+  ).length;
+  const allCompleteResponses = responseData.filter(
+    (response) => response.blankQuestions.length === 0
+  ).length;
   const missingKeyQuestions = questionData.questions.filter(
     (question) =>
       question.graded && question.answerKeySource !== "inferred"
@@ -468,25 +578,33 @@ export function computeQuizInsights(record) {
   const ungradedQuestions = questionData.questions.filter(
     (question) => !question.graded
   );
+  const lowConfidenceKeys = questionData.questions.filter(
+    (question) => question.keyConfidence === "low"
+  );
 
   const summary = {
     responseCount: responseData.length,
     questionCount: questions.length,
     gradedQuestionCount: gradedQuestions.length,
     possibleTotal,
-    average: percents.length
-      ? percents.reduce((sum, value) => sum + value, 0) / percents.length
+    gradingMode,
+    hasScores,
+    average:
+      hasScores && percents.length
+        ? percents.reduce((sum, value) => sum + value, 0) / percents.length
+        : 0,
+    median: hasScores ? median(percents) : 0,
+    highest: hasScores && percents.length ? Math.max(...percents) : 0,
+    lowest: hasScores && percents.length ? Math.min(...percents) : 0,
+    standardDeviation: hasScores ? populationStandardDeviation(percents) : 0,
+    passRate: hasScores
+      ? percent(
+          responseData.filter(
+            (response) => response.percent >= passingPercent
+          ).length,
+          responseData.length
+        )
       : 0,
-    median: median(percents),
-    highest: percents.length ? Math.max(...percents) : 0,
-    lowest: percents.length ? Math.min(...percents) : 0,
-    standardDeviation: populationStandardDeviation(percents),
-    passRate: percent(
-      responseData.filter(
-        (response) => response.percent >= passingPercent
-      ).length,
-      responseData.length
-    ),
     passingPercent,
     onTrack: responseData.filter(
       (response) => response.status === "on-track"
@@ -497,32 +615,44 @@ export function computeQuizInsights(record) {
     atRisk: responseData.filter((response) => response.status === "at-risk")
       .length,
     belowPass: responseData.filter((response) => response.belowPass).length,
-    completionRate: percent(
-      responseData.filter((response) => response.skipped.length === 0).length,
+    nearPass: responseData.filter((response) => response.nearPass).length,
+    pointsLost,
+    averagePoints: responseData.length
+      ? responseData.reduce((sum, response) => sum + response.score, 0) /
+        responseData.length
+      : 0,
+    completionRate: percent(completeResponses, responseData.length),
+    allCompletionRate: percent(
+      allCompleteResponses,
       responseData.length
     ),
+    completeResponses,
+    allCompleteResponses,
     inferredKeyCount: questionData.questions.filter(
       (question) => question.answerKeySource === "inferred"
     ).length,
     missingKeyCount: missingKeyQuestions.length,
-    multipleAnswerCount: questions.filter(
-      (question) => question.type === "multiple"
+    lowConfidenceKeyCount: lowConfidenceKeys.length,
+    multipleAnswerCount: questions.filter((question) =>
+      isMultipleQuestionType(question.type)
     ).length
   };
 
-  const scoreMismatches = responseData.filter((response) => {
-    if (
-      response.exportedScore === null ||
-      response.exportedScore === undefined ||
-      !Number.isFinite(Number(response.exportedScore))
-    ) {
-      return false;
-    }
-    return (
-      Math.abs(Number(response.exportedScore) - response.computedTotal) >
-      EPSILON
-    );
-  }).length;
+  const scoreMismatches = gradedQuestions.length
+    ? responseData.filter((response) => {
+        if (
+          response.exportedScore === null ||
+          response.exportedScore === undefined ||
+          !Number.isFinite(Number(response.exportedScore))
+        ) {
+          return false;
+        }
+        return (
+          Math.abs(Number(response.exportedScore) - response.computedTotal) >
+          EPSILON
+        );
+      }).length
+    : 0;
   const unparsableScoreCells = responseData.reduce(
     (total, response) =>
       total +
@@ -531,10 +661,7 @@ export function computeQuizInsights(record) {
   );
   const blankAnswers = responseData.reduce(
     (sum, response) =>
-      sum +
-      (response.answers || []).filter(
-        (answer) => answer.answered === false || answer.unanswered === true
-      ).length,
+      sum + (response.answers || []).filter((answer) => answerIsBlank(answer)).length,
     0
   );
   const partialAnswers = responseData.reduce(
@@ -555,6 +682,8 @@ export function computeQuizInsights(record) {
       unparsableScoreCells,
       ungradedQuestions,
       missingKeyQuestions,
+      lowConfidenceKeys,
+      gradingMode,
       inferredKeyCount: summary.inferredKeyCount,
       duplicateRows: Number(record.grading?.duplicateRows) || 0,
       blankAnswers,
@@ -590,7 +719,13 @@ export function buildQuestionCSV(record, insights = computeQuizInsights(record))
       "full_credit_rate",
       "most_common_wrong",
       "inferred_answer",
-      "answer_key_source"
+      "answer_key_source",
+      "points_possible",
+      "points_earned",
+      "points_lost",
+      "average_points",
+      "skip_rate",
+      "key_confidence"
     ])
   ];
   for (const question of insights.questions) {
@@ -612,7 +747,13 @@ export function buildQuestionCSV(record, insights = computeQuizInsights(record))
           ? "not graded"
           : question.answerKeySource === "inferred"
             ? "inferred"
-            : "none"
+            : "none",
+        round(question.pointsPossible, 2),
+        round(question.pointsEarned, 2),
+        round(question.pointsLost, 2),
+        round(question.averagePoints, 2),
+        round(question.skipRate, 1),
+        question.keyConfidence
       ])
     );
   }
@@ -632,7 +773,10 @@ export function buildResponseCSV(
       "percent",
       "status",
       "missed_questions",
-      "skipped_questions"
+      "skipped_questions",
+      "points_to_pass",
+      "near_pass",
+      "blank_questions"
     ])
   ];
   for (const response of insights.responses) {
@@ -645,7 +789,14 @@ export function buildResponseCSV(
         round(response.percent, 1),
         response.statusLabel,
         response.missed.map((item) => `Q${item.index + 1}`).join("; "),
-        response.skipped.map((item) => `Q${item.index + 1}`).join("; ")
+        response.skipped.map((item) => `Q${item.index + 1}`).join("; "),
+        response.pointsToPass === null
+          ? ""
+          : round(response.pointsToPass, 2),
+        response.nearPass ? "yes" : "no",
+        response.blankQuestions
+          .map((item) => `Q${item.index + 1}`)
+          .join("; ")
       ])
     );
   }

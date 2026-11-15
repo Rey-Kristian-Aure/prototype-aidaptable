@@ -3,12 +3,14 @@ import { openModal } from "./popover.js";
 import {
   detectColumns,
   detectQuestionType,
+  isMultipleQuestionType,
   normalizeQuestionType,
   normalizeTimestamp,
   parseCSV,
   questionKey
 } from "./quiz-csv.js";
 import { buildQuizImport, inferQuestionPoints } from "./quiz-key.js";
+import { suggestQuizLink } from "./quiz-link.js";
 import {
   buildQuestionCSV,
   buildResponseCSV,
@@ -38,7 +40,12 @@ const MONTH_NAMES = [
 const QUESTION_TYPES = [
   ["single", "Single answer"],
   ["short", "Short answer / fill-in"],
-  ["multiple", "Multiple answers"]
+  ["paragraph", "Paragraph"],
+  ["multiple", "Multiple answers"],
+  ["grid-single", "Grid row · single"],
+  ["grid-multiple", "Grid row · checkboxes"],
+  ["date", "Date"],
+  ["time", "Time"]
 ];
 function questionTypeLabel(type) {
   return (
@@ -60,6 +67,7 @@ let pendingReimportId = null;
 let responseSort = "score-asc";
 let showAtRiskOnly = false;
 let notesOpen = false;
+let expandedResponseId = null;
 let getContext = () => ({ quizzes: [] });
 let showToast = () => {};
 let bound = false;
@@ -229,7 +237,52 @@ function statusLabel(status) {
   if (status === "approaching") {
     return "Approaching";
   }
+  if (status === "not-graded") {
+    return "Not graded";
+  }
   return "At risk";
+}
+
+function keyConfidenceLabel(value) {
+  if (value === "high") {
+    return "High";
+  }
+  if (value === "medium") {
+    return "Medium";
+  }
+  if (value === "low") {
+    return "Low";
+  }
+  return "None";
+}
+
+function answerStateLabel(value) {
+  if (value === "full") {
+    return "Full credit";
+  }
+  if (value === "partial") {
+    return "Partial";
+  }
+  if (value === "wrong") {
+    return "Wrong";
+  }
+  if (value === "blank") {
+    return "Blank";
+  }
+  if (value === "recorded") {
+    return "Recorded";
+  }
+  return "—";
+}
+
+function gradingModeLabel(mode) {
+  if (mode === "score-only") {
+    return "Score only";
+  }
+  if (mode === "not-graded") {
+    return "Not graded";
+  }
+  return "Per-question scores";
 }
 
 function questionNumbers(items, limit = 8) {
@@ -373,6 +426,13 @@ function renderDistribution(insights) {
 }
 
 function renderFrequentlyMissed(insights) {
+  if (!insights.summary.gradedQuestionCount) {
+    return listSection(
+      "Frequently missed questions",
+      emptyInline("No graded questions in this import."),
+      "Ranked by missed rate. Wrong, partial-credit, and blank answers all count as missed."
+    );
+  }
   const items = insights.frequentlyMissed.filter(
     (question) => question.missedCount > 0
   );
@@ -387,13 +447,17 @@ function renderFrequentlyMissed(insights) {
                   <div class="qb-missed-title">
                     <span class="qb-qtag">Q${question.index + 1}</span>
                     <strong>${escapeHTML(question.prompt)}</strong>
+                    <span class="qb-percent-pill">${percent(question.missedRate, 0)} missed</span>
+                  </div>
+                  <div class="qb-missed-bar">
+                    ${bar(question.missedRate, 100, "warn")}
                   </div>
                   <p>
-                    ${percent(question.missedRate, 0)} missed
-                    (${question.responseCount - question.fullCredit}/${question.responseCount})
+                    ${question.responseCount - question.fullCredit}/${question.responseCount} responses
                     · ${question.incorrect} wrong
                     · ${question.partial} partial
                     · ${question.blank} blank
+                    · ${points(question.pointsLost)} pts lost
                   </p>
                   <p class="qb-muted">
                     ${
@@ -419,6 +483,7 @@ function renderFrequentlyMissed(insights) {
 }
 
 function renderAttention(insights) {
+  const hasQuestionScores = insights.summary.gradedQuestionCount > 0;
   const records = insights.responses
     .filter((response) => response.belowPass)
     .sort((left, right) => left.percent - right.percent)
@@ -431,9 +496,23 @@ function renderAttention(insights) {
               <div class="qb-attention-item">
                 <div>
                   <strong>${escapeHTML(response.label)}</strong>
-                  <p class="qb-muted">${escapeHTML(questionNumbers(response.missed, 10))}</p>
+                  <p class="qb-muted">
+                    ${escapeHTML(
+                      hasQuestionScores
+                        ? questionNumbers(response.missed, 10)
+                        : "Question-level misses unavailable"
+                    )}
+                    ${
+                      response.pointsToPass !== null
+                        ? ` · ${points(response.pointsToPass)} ${plural(response.pointsToPass, "point")} to pass`
+                        : ""
+                    }
+                  </p>
                 </div>
-                <span class="qb-percent-pill">${percent(response.percent, 1)}</span>
+                <div class="qb-attention-pills">
+                  ${response.nearPass ? `<span class="qb-status approaching">Near pass</span>` : ""}
+                  <span class="qb-percent-pill">${percent(response.percent, 1)}</span>
+                </div>
               </div>
             `
           )
@@ -447,33 +526,137 @@ function renderAttention(insights) {
   );
 }
 
+function renderStatusMix(insights) {
+  const { summary } = insights;
+  const approachFloor = Math.min(50, summary.passingPercent);
+  const parts = [`On track ≥ ${percent(summary.passingPercent, 0)}`];
+  if (approachFloor < summary.passingPercent) {
+    parts.push(
+      `Approaching ${percent(approachFloor, 0)}–${percent(
+        summary.passingPercent,
+        0
+      )}`
+    );
+  }
+  parts.push(`At risk < ${percent(approachFloor, 0)}`);
+  return listSection(
+    "Status mix",
+    `<div class="qb-status-mix">
+      <span class="qb-status on-track">${summary.onTrack} on track</span>
+      <span class="qb-status approaching">${summary.approaching} approaching</span>
+      <span class="qb-status at-risk">${summary.atRisk} at risk</span>
+    </div>
+    <p class="qb-muted">
+      ${summary.belowPass} below the ${percent(summary.passingPercent, 0)} passing threshold
+      · ${summary.nearPass} within 10 percentage points of passing.
+    </p>`,
+    `${parts.join(" · ")}.`
+  );
+}
+
 function renderOverview(insights) {
   const { summary } = insights;
-  const completeResponses = summary.responseCount
-    ? Math.round((summary.completionRate / 100) * summary.responseCount)
-    : 0;
+  const hasScores = summary.hasScores;
+  const gradingNotice =
+    summary.gradingMode === "score-only"
+      ? `<div class="notice info"><span>This export has a total score but no per-question scores. Class percentages use the exported total; question-level correctness is unavailable.</span></div>`
+      : summary.gradingMode === "not-graded"
+        ? `<div class="notice info"><span>No graded questions or total score were found. Answers are shown without pass/fail or at-risk labels.</span></div>`
+        : "";
+  const completionNote =
+    summary.allCompleteResponses === summary.responseCount
+      ? "No blank answers"
+      : hasScores
+        ? `${summary.responseCount - summary.allCompleteResponses} with blank answers · Graded ${percent(
+            summary.completionRate,
+            0
+          )}`
+        : `${summary.responseCount - summary.allCompleteResponses} with blank answers`;
   return `
+    ${gradingNotice}
     <div class="qb-kpi-grid">
-      ${kpi("Responses", String(summary.responseCount), `${summary.gradedQuestionCount} graded questions`)}
-      ${kpi("Average", percent(summary.average, 1), `Median ${percent(summary.median, 1)}`)}
-      ${kpi("Pass rate", percent(summary.passRate, 0), `${summary.belowPass} below ${percent(summary.passingPercent, 0)}`)}
-      ${kpi("Highest", percent(summary.highest, 1), `Lowest ${percent(summary.lowest, 1)}`)}
-      ${kpi("At risk", String(summary.atRisk), `Below ${percent(Math.min(50, summary.passingPercent), 0)}`)}
-      ${kpi("Std. deviation", `${round(summary.standardDeviation, 1)} pts`, "Population SD")}
       ${kpi(
-        "Completion",
-        percent(summary.completionRate, 0),
-        completeResponses === summary.responseCount
-          ? "No blank answers"
-          : `${summary.responseCount - completeResponses} with blank answers`
+        "Responses",
+        String(summary.responseCount),
+        summary.gradedQuestionCount
+          ? `${summary.gradedQuestionCount} graded questions`
+          : gradingModeLabel(summary.gradingMode)
       )}
-      ${kpi("Possible points", points(summary.possibleTotal), `${summary.questionCount} questions`)}
+      ${kpi(
+        "Average",
+        hasScores ? percent(summary.average, 1) : "—",
+        hasScores ? `Median ${percent(summary.median, 1)}` : "No graded scores"
+      )}
+      ${kpi(
+        "Pass rate",
+        hasScores ? percent(summary.passRate, 0) : "—",
+        hasScores
+          ? `${summary.belowPass} below ${percent(summary.passingPercent, 0)}`
+          : "No graded scores"
+      )}
+      ${kpi(
+        "Score range",
+        hasScores
+          ? `${percent(summary.highest, 1)} / ${percent(summary.lowest, 1)}`
+          : "—",
+        "Highest / lowest"
+      )}
+      ${kpi(
+        "Near pass",
+        hasScores ? String(summary.nearPass) : "—",
+        hasScores
+          ? `Within 10 pts of ${percent(summary.passingPercent, 0)}`
+          : "No graded scores"
+      )}
+      ${kpi(
+        "At risk",
+        hasScores ? String(summary.atRisk) : "—",
+        hasScores
+          ? `Below ${percent(Math.min(50, summary.passingPercent), 0)}`
+          : "No graded scores"
+      )}
+      ${kpi(
+        "Std. deviation",
+        hasScores ? `${round(summary.standardDeviation, 1)} pts` : "—",
+        "Population SD"
+      )}
+      ${kpi("Completion", percent(summary.allCompletionRate, 0), completionNote)}
+      ${kpi(
+        "Possible points",
+        summary.possibleTotal > 0 ? points(summary.possibleTotal) : "—",
+        summary.gradingMode === "score-only"
+          ? "From exported total"
+          : summary.gradedQuestionCount
+            ? `${summary.gradedQuestionCount} graded ${plural(
+                summary.gradedQuestionCount,
+                "question"
+              )}`
+            : "No graded questions"
+      )}
+      ${kpi(
+        "Points lost",
+        hasScores ? points(summary.pointsLost) : "—",
+        hasScores
+          ? summary.gradingMode === "score-only"
+            ? "From exported totals"
+            : "Across graded questions"
+          : "No graded scores"
+      )}
     </div>
-    <div class="qb-two-col">
-      ${renderDistribution(insights)}
-      ${renderFrequentlyMissed(insights)}
-    </div>
-    ${renderAttention(insights)}
+    ${
+      hasScores
+        ? `<div class="qb-two-col">
+            ${renderDistribution(insights)}
+            ${renderStatusMix(insights)}
+          </div>`
+        : ""
+    }
+    ${renderFrequentlyMissed(insights)}
+    ${
+      hasScores
+        ? renderAttention(insights)
+        : `<div class="notice info"><span>Pass/fail attention lists are unavailable because this import has no graded scores.</span></div>`
+    }
     ${
       summary.responseCount > 0 && summary.responseCount < 5
         ? `<div class="notice info"><span>Small sample: n=${summary.responseCount}. Treat the percentages as a quick check, not a precise class measure.</span></div>`
@@ -531,8 +714,13 @@ function renderQuestionCard(question) {
       ? `Inferred key from ${question.keyResponseCount} full-credit ${plural(
           question.keyResponseCount,
           "response"
-        )}: ${question.correctAnswerText}`
+        )} (${keyConfidenceLabel(question.keyConfidence).toLowerCase()} confidence): ${question.correctAnswerText}`
       : "No response earned full credit, so no correct answer can be inferred.";
+  const keyChip = !question.graded
+    ? ""
+    : question.answerKeySource === "inferred"
+      ? `<span class="qb-key-confidence ${question.keyConfidence}">${keyConfidenceLabel(question.keyConfidence)} confidence</span>`
+      : `<span class="qb-key-confidence none">No key inferred</span>`;
 
   return `
     <article class="qb-question-card">
@@ -541,8 +729,14 @@ function renderQuestionCard(question) {
         <div class="qb-question-title">
           <h3>${escapeHTML(question.prompt)}</h3>
           <p>
-            ${points(question.points)} ${plural(question.points, "point")}
-            · ${escapeHTML(question.difficulty)}
+            ${
+              question.graded
+                ? `${points(question.points)} ${plural(
+                    question.points,
+                    "point"
+                  )} · ${escapeHTML(question.difficulty)}`
+                : "No exported score"
+            }
             ${question.type !== "single" ? ` · ${escapeHTML(questionTypeLabel(question.type))}` : ""}
           </p>
         </div>
@@ -552,14 +746,25 @@ function renderQuestionCard(question) {
         </div>
       </div>
       <div class="qb-question-stats">
-        <span><strong>${question.fullCredit}</strong> full</span>
-        <span><strong>${question.partial}</strong> partial</span>
-        <span><strong>${question.incorrect}</strong> wrong</span>
+        ${
+          question.graded
+            ? `<span><strong>${question.fullCredit}</strong> full</span>
+               <span><strong>${question.partial}</strong> partial</span>
+               <span><strong>${question.incorrect}</strong> wrong</span>`
+            : ""
+        }
         <span><strong>${question.blank}</strong> blank</span>
         <span><strong>${question.answeredCount}</strong> answered</span>
+        ${
+          question.graded
+            ? `<span><strong>${points(question.averagePoints)}</strong> avg pts</span>
+               <span><strong>${points(question.pointsLost)}</strong> pts lost</span>`
+            : ""
+        }
+        <span><strong>${percent(question.skipRate, 0)}</strong> skipped</span>
       </div>
       ${
-        question.type === "multiple"
+        isMultipleQuestionType(question.type)
           ? `<p class="qb-muted">Answer combinations</p>`
           : ""
       }
@@ -579,8 +784,61 @@ function renderQuestionCard(question) {
               : ""
           }
         </p>
+        ${keyChip}
       </div>
     </article>
+  `;
+}
+
+function renderQuestionTable(insights) {
+  const rows = insights.questions
+    .map((question) => {
+      const key =
+        !question.graded
+          ? "—"
+          : question.answerKeySource === "inferred"
+            ? `${keyConfidenceLabel(question.keyConfidence)} confidence`
+            : "No key";
+      return `
+        <tr>
+          <td><span class="qb-qtag">Q${question.index + 1}</span></td>
+          <td class="qb-qcell">${escapeHTML(question.prompt)}</td>
+          <td>${escapeHTML(questionTypeLabel(question.type))}</td>
+          <td>${
+            question.graded
+              ? `${question.fullCredit} · ${percent(question.rate, 0)}`
+              : "—"
+          }</td>
+          <td>${question.graded ? question.partial : "—"}</td>
+          <td>${question.graded ? question.incorrect : "—"}</td>
+          <td>${question.blank}</td>
+          <td>${question.graded ? points(question.averagePoints) : "—"}</td>
+          <td>${question.graded ? points(question.pointsLost) : "—"}</td>
+          <td>${escapeHTML(key)}</td>
+        </tr>
+      `;
+    })
+    .join("");
+  return `
+    <div class="qb-table-wrap qb-question-table-wrap">
+      <table class="qb-table qb-question-table">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Question</th>
+            <th>Type</th>
+            <th>Full credit</th>
+            <th>Partial</th>
+            <th>Wrong</th>
+            <th>Blank</th>
+            <th>Avg pts</th>
+            <th>Pts lost</th>
+            <th>Key</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
   `;
 }
 
@@ -588,10 +846,25 @@ function renderQuestions(insights) {
   const cards = insights.questions.length
     ? insights.questions.map((question) => renderQuestionCard(question)).join("")
     : emptyInline("No questions were imported.");
+  const notice =
+    insights.summary.gradingMode === "score-only"
+      ? "This export has only a total score. Answers are listed without per-question correctness or inferred keys."
+      : insights.summary.gradingMode === "not-graded"
+        ? "This export has no scores. Answers are listed without grading."
+        : "Exported scores are the source of truth. Correct answers are inferred from responses that earned full credit. No manual answer key is needed.";
   return `
     <div class="notice info">
-      <span>Exported scores are the source of truth. Correct answers are inferred from responses that earned full credit. No manual answer key is needed.</span>
+      <span>${escapeHTML(notice)}</span>
     </div>
+    ${
+      insights.questions.length
+        ? listSection(
+            "Question summary",
+            renderQuestionTable(insights),
+            "One row per question. Expand the cards below for answer distributions and inferred keys."
+          )
+        : ""
+    }
     <div class="qb-question-list">${cards}</div>
   `;
 }
@@ -607,6 +880,18 @@ function sortResponses(responses) {
       (left, right) =>
         right.missed.length - left.missed.length || left.index - right.index
     );
+  } else if (responseSort === "pass-gap-asc") {
+    result.sort((left, right) => {
+      const leftGap =
+        left.belowPass && left.pointsToPass !== null
+          ? left.pointsToPass
+          : Number.POSITIVE_INFINITY;
+      const rightGap =
+        right.belowPass && right.pointsToPass !== null
+          ? right.pointsToPass
+          : Number.POSITIVE_INFINITY;
+      return leftGap - rightGap || left.index - right.index;
+    });
   } else {
     result.sort(
       (left, right) => left.percent - right.percent || left.index - right.index
@@ -615,23 +900,145 @@ function sortResponses(responses) {
   return result;
 }
 
+function renderResponseDetail(response, detailId) {
+  const detailRows = response.answerDetails
+    .map(
+      (detail) => `
+        <tr>
+          <td><span class="qb-qtag">Q${detail.index + 1}</span></td>
+          <td class="qb-qcell">${escapeHTML(detail.prompt)}</td>
+          <td class="qb-response-answer">${
+            detail.raw ? escapeHTML(detail.raw) : "(blank)"
+          }</td>
+          <td><span class="qb-answer-state ${detail.state}">${escapeHTML(
+            answerStateLabel(detail.state)
+          )}</span></td>
+          <td class="qb-nowrap">${
+            detail.graded
+              ? `${points(detail.pointsEarned)} / ${points(
+                  detail.pointsPossible
+                )}`
+              : "—"
+          }</td>
+          <td class="qb-response-feedback">${
+            detail.feedback ? escapeHTML(detail.feedback) : "—"
+          }</td>
+        </tr>
+      `
+    )
+    .join("");
+
+  return `
+    <tr class="qb-response-detail-row" id="${escapeHTML(detailId)}">
+      <td colspan="6">
+        <div class="qb-response-detail">
+          <div class="qb-response-detail-head">
+            <div>
+              <strong>${escapeHTML(response.label)}</strong>
+              <p class="qb-muted">
+                ${escapeHTML(response.submittedAtRaw || "Submission time unknown")}
+                · ${escapeHTML(response.statusLabel)}
+                ${
+                  response.scoreSource === "exported"
+                    ? " · score from exported total"
+                    : ""
+                }
+              </p>
+            </div>
+            <div class="qb-attention-pills">
+              ${
+                response.possible > 0
+                  ? `<span class="qb-stat-chip">${points(
+                      response.score
+                    )} / ${points(response.possible)} · ${percent(
+                      response.percent,
+                      1
+                    )}</span>`
+                  : ""
+              }
+              ${
+                response.nearPass
+                  ? `<span class="qb-status approaching">Near pass</span>`
+                  : ""
+              }
+              ${
+                response.pointsToPass !== null
+                  ? `<span class="qb-stat-chip">${points(
+                      response.pointsToPass
+                    )} ${plural(
+                      response.pointsToPass,
+                      "point"
+                    )} to pass</span>`
+                  : ""
+              }
+            </div>
+          </div>
+          <div class="qb-table-wrap">
+            <table class="qb-table qb-response-detail-table">
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>Question</th>
+                  <th>Answer</th>
+                  <th>State</th>
+                  <th>Points</th>
+                  <th>Feedback</th>
+                </tr>
+              </thead>
+              <tbody>${detailRows}</tbody>
+            </table>
+          </div>
+        </div>
+      </td>
+    </tr>
+  `;
+}
+
 function renderResponses(insights) {
+  const { summary } = insights;
+  const hasScores = summary.hasScores;
+  const hasQuestionScores = summary.gradedQuestionCount > 0;
   const visible = sortResponses(
-    showAtRiskOnly
+    showAtRiskOnly && hasScores
       ? insights.responses.filter((response) => response.belowPass)
       : insights.responses
   );
   const rows = visible
-    .map(
-      (response) => `
-        <tr>
-          <td><strong>${escapeHTML(response.label)}</strong></td>
+    .map((response) => {
+      const expanded = expandedResponseId === response.id;
+      const detailId = `qb-response-detail-${response.id}`;
+      const missedText = hasQuestionScores
+        ? questionNumbers(response.missed, 8)
+        : response.blankQuestions.length
+          ? questionNumbers(response.blankQuestions, 8)
+          : "No blank answers";
+      return `
+        <tr class="${expanded ? "expanded" : ""}">
+          <td>
+            <button
+              class="qb-response-toggle"
+              type="button"
+              data-qb-action="toggle-response"
+              data-response-id="${escapeHTML(response.id)}"
+              aria-expanded="${expanded ? "true" : "false"}"
+              aria-controls="${escapeHTML(detailId)}"
+            >
+              <strong>${escapeHTML(response.label)}</strong>
+              <span aria-hidden="true">${expanded ? "−" : "+"}</span>
+            </button>
+          </td>
           <td class="qb-nowrap">${escapeHTML(response.submittedAtRaw || "—")}</td>
-          <td class="qb-nowrap">${points(response.score)} / ${points(response.possible)}</td>
-          <td><strong>${percent(response.percent, 1)}</strong></td>
+          <td class="qb-nowrap">${
+            hasScores
+              ? `${points(response.score)} / ${points(response.possible)}`
+              : "—"
+          }</td>
+          <td><strong>${
+            hasScores ? percent(response.percent, 1) : "—"
+          }</strong></td>
           <td><span class="qb-status ${escapeHTML(response.status)}">${escapeHTML(statusLabel(response.status))}</span></td>
           <td>
-            <span class="qb-missed-questions">${escapeHTML(questionNumbers(response.missed, 8))}</span>
+            <span class="qb-missed-questions">${escapeHTML(missedText)}</span>
             ${
               response.skipped.length
                 ? `<small class="qb-muted">Skipped: ${escapeHTML(questionNumbers(response.skipped, 6))}</small>`
@@ -639,25 +1046,31 @@ function renderResponses(insights) {
             }
           </td>
         </tr>
-      `
-    )
+        ${expanded ? renderResponseDetail(response, detailId) : ""}
+      `;
+    })
     .join("");
 
+  const controls = hasScores
+    ? `<div class="qb-student-controls">
+        <label class="form-field qb-inline-field">
+          <span>Sort by</span>
+          <select data-qb-response-sort>
+            <option value="score-asc" ${responseSort === "score-asc" ? "selected" : ""}>Lowest score first</option>
+            <option value="score-desc" ${responseSort === "score-desc" ? "selected" : ""}>Highest score first</option>
+            <option value="pass-gap-asc" ${responseSort === "pass-gap-asc" ? "selected" : ""}>Closest to passing first</option>
+            <option value="missed-desc" ${responseSort === "missed-desc" ? "selected" : ""}>Most missed questions</option>
+          </select>
+        </label>
+        <label class="qb-check">
+          <input type="checkbox" data-qb-at-risk ${showAtRiskOnly ? "checked" : ""} />
+          <span>Only responses below the passing threshold</span>
+        </label>
+      </div>`
+    : `<div class="notice info"><span>This import has no graded scores. Response rows list recorded answers without pass/fail labels.</span></div>`;
+
   return `
-    <div class="qb-student-controls">
-      <label class="form-field qb-inline-field">
-        <span>Sort by</span>
-        <select data-qb-response-sort>
-          <option value="score-asc" ${responseSort === "score-asc" ? "selected" : ""}>Lowest score first</option>
-          <option value="score-desc" ${responseSort === "score-desc" ? "selected" : ""}>Highest score first</option>
-          <option value="missed-desc" ${responseSort === "missed-desc" ? "selected" : ""}>Most missed questions</option>
-        </select>
-      </label>
-      <label class="qb-check">
-        <input type="checkbox" data-qb-at-risk ${showAtRiskOnly ? "checked" : ""} />
-        <span>Only responses below the passing threshold</span>
-      </label>
-    </div>
+    ${controls}
     ${
       rows
         ? `<div class="qb-table-wrap">
@@ -669,7 +1082,7 @@ function renderResponses(insights) {
                   <th>Score</th>
                   <th>Percent</th>
                   <th>Status</th>
-                  <th>Missed questions</th>
+                  <th>${hasQuestionScores ? "Missed questions" : "Blank answers"}</th>
                 </tr>
               </thead>
               <tbody>${rows}</tbody>
@@ -685,15 +1098,22 @@ function renderImportNotes(insights, record) {
   const qualityItems = [
     ["Responses", insights.summary.responseCount],
     ["Questions", insights.summary.questionCount],
+    ["Grading mode", gradingModeLabel(dataQuality.gradingMode)],
     ["Graded questions", insights.summary.gradedQuestionCount],
     ["Ungraded questions", dataQuality.ungradedQuestions.length],
     ["Inferred keys", dataQuality.inferredKeyCount],
+    ["Low-confidence keys", dataQuality.lowConfidenceKeys.length],
     ["Without an inferred key", dataQuality.missingKeyQuestions.length],
     ["Score mismatches", dataQuality.scoreMismatches],
     ["Unparsable score cells", dataQuality.unparsableScoreCells],
     ["Duplicate rows", dataQuality.duplicateRows],
     ["Blank answers", dataQuality.blankAnswers],
-    ["Partial-credit answers", dataQuality.partialAnswers]
+    ["Partial-credit answers", dataQuality.partialAnswers],
+    ["All-answer completion", percent(insights.summary.allCompletionRate, 0)],
+    [
+      "Points lost",
+      insights.summary.hasScores ? points(insights.summary.pointsLost) : "—"
+    ]
   ];
   const warningList = dataQuality.warnings.length
     ? `<div class="qb-warning-list">
@@ -706,7 +1126,7 @@ function renderImportNotes(insights, record) {
       </div>`
     : `<div class="notice success"><span>No import warnings. The file mapped cleanly.</span></div>`;
 
-  const gradingRows = record.questions
+  const gradingRows = insights.questions
     .map(
       (question, index) => `
         <tr>
@@ -714,7 +1134,13 @@ function renderImportNotes(insights, record) {
           <td>${escapeHTML(question.prompt)}</td>
           <td>${escapeHTML(questionTypeLabel(question.type))}</td>
           <td>${points(question.points)}</td>
-          <td>${question.hasExportedScore ? "Exported score" : "Not graded"}</td>
+          <td>${
+            question.graded
+              ? "Graded"
+              : question.hasExportedScore
+                ? "No usable scores"
+                : "Not graded"
+          }</td>
           <td>${
             question.answerKeySource === "inferred"
               ? `Inferred from ${question.keyResponseCount} ${plural(
@@ -724,6 +1150,11 @@ function renderImportNotes(insights, record) {
               : question.graded
                 ? "No key inferable"
                 : "—"
+          }</td>
+          <td>${
+            question.graded && question.answerKeySource === "inferred"
+              ? keyConfidenceLabel(question.keyConfidence)
+              : "—"
           }</td>
         </tr>
       `
@@ -756,6 +1187,7 @@ function renderImportNotes(insights, record) {
           <div><dt>Rows in file</dt><dd>${record.sourceRowCount}</dd></div>
           <div><dt>Imported</dt><dd>${escapeHTML(formatDateTime(record.importedAt))}</dd></div>
           <div><dt>Scoring source</dt><dd>${escapeHTML(scoringSourceLabel(record.scoringSource))}</dd></div>
+          <div><dt>Grading mode</dt><dd>${escapeHTML(gradingModeLabel(dataQuality.gradingMode))}</dd></div>
           <div><dt>Quiz link</dt><dd>${
             record.quizId
               ? `${escapeHTML(record.quizTitle)}${
@@ -772,7 +1204,7 @@ function renderImportNotes(insights, record) {
       "Question grading",
       `<div class="qb-table-wrap">
         <table class="qb-table">
-          <thead><tr><th>#</th><th>Question</th><th>Type</th><th>Points</th><th>Grading</th><th>Correct answer</th></tr></thead>
+          <thead><tr><th>#</th><th>Question</th><th>Type</th><th>Points</th><th>Grading</th><th>Correct answer</th><th>Key confidence</th></tr></thead>
           <tbody>${gradingRows}</tbody>
         </table>
       </div>`,
@@ -797,7 +1229,8 @@ function renderReport(record) {
     dataQuality.unparsableScoreCells +
     dataQuality.duplicateRows +
     dataQuality.ungradedQuestions.length +
-    dataQuality.missingKeyQuestions.length;
+    dataQuality.missingKeyQuestions.length +
+    dataQuality.lowConfidenceKeys.length;
 
   return `
     <div class="qb-detail-shell" id="qb-detail">
@@ -833,7 +1266,21 @@ function renderReport(record) {
           <span class="chip">${summary.responseCount} ${plural(summary.responseCount, "response")}</span>
           <span class="chip">${summary.questionCount} ${plural(summary.questionCount, "question")}</span>
           <span class="chip">${summary.inferredKeyCount} inferred ${plural(summary.inferredKeyCount, "key")}</span>
-          <span class="chip">${escapeHTML(scoringSourceLabel(record.scoringSource))}</span>
+          <span class="chip">${escapeHTML(gradingModeLabel(summary.gradingMode))}</span>
+          ${
+            summary.lowConfidenceKeyCount
+              ? `<span class="chip warning">${summary.lowConfidenceKeyCount} low-confidence ${plural(
+                  summary.lowConfidenceKeyCount,
+                  "key"
+                )}</span>`
+              : ""
+          }
+          ${
+            summary.hasScores
+              ? `<span class="chip">${points(summary.pointsLost)} pts lost</span>`
+              : ""
+          }
+          <span class="chip">${percent(summary.allCompletionRate, 0)} all answered</span>
           ${
             record.quizId
               ? `<span class="chip">${isLinked(record) ? "Linked quiz" : "Quiz not scheduled"}</span>`
@@ -998,9 +1445,16 @@ function renderWizardAdvanced() {
       ID columns are excluded automatically; responses stay anonymous.
     </p>
     <p class="qb-note">
-      Single answer and short answer / fill-in treat each response as one answer
-      and infer the key from full-credit responses. Multiple answers split
+      Single answer covers multiple choice and dropdown; multiple answers
+      covers checkboxes. Grid rows are listed separately. Single answer, short
+      answer / fill-in, paragraph, date, time, and grid-single treat each
+      response as one answer; multiple answers and grid checkboxes split
       selections on commas, semicolons, or pipes.
+    </p>
+    <p class="qb-note">
+      Paragraph, date, and time questions are imported without grading unless
+      their score column contains numeric scores. Rating and file-upload
+      questions are skipped automatically.
     </p>
     <div class="qb-table-wrap">
       <table class="qb-table qb-map-table">
@@ -1017,6 +1471,21 @@ function renderWizardAdvanced() {
         </thead>
         <tbody>${questionRows}</tbody>
       </table>
+    </div>
+  `;
+}
+
+function renderWizardAdvancedSection() {
+  if (!wizard.showAdvanced) {
+    return "";
+  }
+  return `
+    <div class="qb-advanced-panel" id="qb-advanced-panel">
+      <div class="qb-advanced-head">
+        <h3>Advanced mapping</h3>
+        <p>Override automatic detection only when a question, type, points value, or score column is wrong.</p>
+      </div>
+      ${renderWizardAdvanced()}
     </div>
   `;
 }
@@ -1044,6 +1513,14 @@ function wizardPreview() {
 function renderWizard() {
   const preview = wizardPreview();
   const record = preview.record;
+  const lowConfidenceCount =
+    preview.insights?.summary.lowConfidenceKeyCount || 0;
+  const previewPossibleTotal = record
+    ? record.grading.possibleTotal || record.grading.exportedPossibleTotal || 0
+    : 0;
+  const previewGradedCount = record
+    ? record.questions.filter((question) => question.graded).length
+    : 0;
   const header = `
     <div class="card-header">
       <div>
@@ -1056,7 +1533,13 @@ function renderWizard() {
       </div>
       <div class="card-actions">
         <span class="chip">Auto-detected</span>
-        <button class="btn ghost small" type="button" data-qb-action="toggle-advanced">
+        <button
+          class="btn small qb-advanced-toggle"
+          type="button"
+          data-qb-action="toggle-advanced"
+          aria-expanded="${wizard.showAdvanced ? "true" : "false"}"
+          aria-controls="qb-advanced-panel"
+        >
           ${wizard.showAdvanced ? "Hide advanced mapping" : "Advanced mapping"}
         </button>
       </div>
@@ -1068,7 +1551,7 @@ function renderWizard() {
       <section class="card qb-wizard" data-qb-wizard>
         ${header}
         <div class="notice danger"><span>${escapeHTML(preview.error)}</span></div>
-        ${wizard.showAdvanced ? renderWizardAdvanced() : ""}
+        ${renderWizardAdvancedSection()}
         <div class="qb-wizard-actions">
           <button class="btn ghost" type="button" data-qb-action="wizard-cancel">Cancel import</button>
         </div>
@@ -1086,9 +1569,8 @@ function renderWizard() {
   const missingKeys = record.questions.filter(
     (question) => question.graded && question.answerKeySource !== "inferred"
   );
-  const ungraded = record.questions.filter((question) => !question.graded);
-  const multipleCount = record.questions.filter(
-    (question) => question.type === "multiple"
+  const multipleCount = record.questions.filter((question) =>
+    isMultipleQuestionType(question.type)
   ).length;
   const inferredCount = record.questions.filter(
     (question) => question.answerKeySource === "inferred"
@@ -1101,6 +1583,11 @@ function renderWizard() {
   const linkedQuiz = (getContext().quizzes || []).find(
     (quiz) => quiz.id === wizard.targetQuizId
   );
+  const autoLinkedQuiz = wizard.autoLinkedQuizId
+    ? (getContext().quizzes || []).find(
+        (quiz) => quiz.id === wizard.autoLinkedQuizId
+      )
+    : null;
   const dateNote = linkedQuiz
     ? "Date from the linked quiz."
     : wizard.dateSource === "first response"
@@ -1108,17 +1595,30 @@ function renderWizard() {
       : wizard.dateSource === "previous import"
         ? "Date kept from the previous import."
         : "No timestamp found. Set a date in advanced mapping if needed.";
+  const possibleMatch = wizard.linkSuggestion?.candidates?.[0] || null;
+  const linkNotice =
+    autoLinkedQuiz && wizard.targetQuizId === autoLinkedQuiz.id
+      ? `<div class="notice success"><span>Matched to scheduled quiz "${escapeHTML(
+          autoLinkedQuiz.title
+        )}" by title and date.</span></div>`
+      : wizard.linkSuggestion && !wizard.targetQuizId
+        ? wizard.linkSuggestion.confidence === "possible" && possibleMatch
+          ? `<div class="notice info"><span>Possible scheduled quiz match: "${escapeHTML(
+              possibleMatch.title
+            )}" · ${escapeHTML(
+              formatISODate(possibleMatch.date)
+            )}. This import stays standalone unless you link it above.</span></div>`
+          : `<div class="notice info"><span>Several scheduled quizzes look similar${
+              possibleMatch
+                ? `, including "${escapeHTML(possibleMatch.title)}"`
+                : ""
+            }. This import stays standalone unless you choose one above.</span></div>`
+        : "";
 
   const missingKeyNotice = missingKeys.length
     ? `<div class="notice warning"><span>No correct answer can be inferred for ${missingKeys
         .map((question) => `Q${record.questions.indexOf(question) + 1}`)
         .join(", ")} because no response earned full credit. Scores and answer distributions still work.</span></div>`
-    : "";
-  const ungradedNotice = ungraded.length
-    ? `<div class="notice info"><span>${ungraded.length} ${plural(
-        ungraded.length,
-        "question"
-      )} has no exported score and will be shown without grading.</span></div>`
     : "";
   const warningsNotice = warnings.length
     ? `<div class="qb-warning-list">${warnings
@@ -1129,7 +1629,7 @@ function renderWizard() {
         .join("")}</div>`
     : "";
   const successNotice =
-    !warnings.length && !missingKeys.length && !ungraded.length
+    !warnings.length && !missingKeys.length
       ? `<div class="notice success"><span>Everything was detected automatically. No exceptions found.</span></div>`
       : "";
 
@@ -1139,8 +1639,16 @@ function renderWizard() {
       <div class="qb-review-summary">
         ${kpi("Responses", String(record.responses.length), "From the CSV")}
         ${kpi("Questions", String(record.questions.length), `${multipleCount} multiple-answer`)}
-        ${kpi("Possible points", points(record.grading.possibleTotal), `${record.questions.filter((question) => question.graded).length} graded`)}
-        ${kpi("Inferred keys", `${inferredCount} / ${record.questions.filter((question) => question.graded).length}`, "From full-credit responses")}
+        ${kpi(
+          "Possible points",
+          previewPossibleTotal > 0 ? points(previewPossibleTotal) : "—",
+          previewGradedCount
+            ? `${previewGradedCount} graded`
+            : record.grading.exportedPossibleTotal > 0
+              ? "From exported total"
+              : "No graded questions"
+        )}
+        ${kpi("Inferred keys", `${inferredCount} / ${previewGradedCount}`, "From full-credit responses")}
         ${kpi("Passing threshold", `${wizard.passingPercent}%`, "Editable in advanced mapping")}
       </div>
       <div class="qb-review-target">
@@ -1152,6 +1660,14 @@ function renderWizard() {
       <div class="qb-chip-row">
         <span class="qb-stat-chip ${inferredCount ? "good" : ""}">${inferredCount} inferred ${plural(inferredCount, "key")}</span>
         <span class="qb-stat-chip ${missingKeys.length ? "warn" : ""}">${missingKeys.length} without a key</span>
+        ${
+          lowConfidenceCount
+            ? `<span class="qb-stat-chip warn">${lowConfidenceCount} low-confidence ${plural(
+                lowConfidenceCount,
+                "key"
+              )}</span>`
+            : ""
+        }
         <span class="qb-stat-chip">${multipleCount} multiple-answer ${plural(multipleCount, "question")}</span>
         ${
           wizard.columns.identityCandidates.length
@@ -1172,9 +1688,9 @@ function renderWizard() {
       }
       ${warningsNotice}
       ${missingKeyNotice}
-      ${ungradedNotice}
       ${successNotice}
-      ${wizard.showAdvanced ? renderWizardAdvanced() : ""}
+      ${linkNotice}
+      ${renderWizardAdvancedSection()}
       <div class="qb-wizard-actions">
         <button class="btn ghost" type="button" data-qb-action="wizard-cancel">Cancel import</button>
         <button class="btn primary" type="button" data-qb-action="wizard-import">
@@ -1300,6 +1816,7 @@ export function focusQuizBinImportForQuiz(quizId) {
   selectedId = record.id;
   activeTab = "overview";
   notesOpen = false;
+  expandedResponseId = null;
   wizard = null;
   return true;
 }
@@ -1328,6 +1845,12 @@ function handleClick(event) {
     openExportMenu(importId);
   } else if (action === "tab") {
     activeTab = actionElement.dataset.tab || "overview";
+    expandedResponseId = null;
+    render();
+  } else if (action === "toggle-response") {
+    const responseId = actionElement.dataset.responseId || "";
+    expandedResponseId =
+      expandedResponseId === responseId ? null : responseId;
     render();
   } else if (action === "toggle-notes") {
     notesOpen = !notesOpen;
@@ -1356,6 +1879,7 @@ function handleChange(event) {
     selectedId = target.value;
     activeTab = "overview";
     notesOpen = false;
+    expandedResponseId = null;
     wizard = null;
     pendingReimportId = null;
     render();
@@ -1364,12 +1888,14 @@ function handleChange(event) {
 
   if (target.matches("[data-qb-response-sort]")) {
     responseSort = target.value;
+    expandedResponseId = null;
     render();
     return;
   }
 
   if (target.matches("[data-qb-at-risk]")) {
     showAtRiskOnly = target.checked;
+    expandedResponseId = null;
     render();
     return;
   }
@@ -1557,7 +2083,7 @@ async function handleFile(file) {
     pendingReimportId = null;
     return;
   }
-  const columns = detectColumns(parsed.headers);
+  const columns = detectColumns(parsed.headers, parsed.rows);
   if (!columns.questionColumns.length) {
     showToast(
       "No question columns were detected. Check that the CSV includes the form answers.",
@@ -1577,16 +2103,32 @@ async function handleFile(file) {
         )
       : null;
   const firstDate = firstResponseDate(parsed.rows, columns.timestampIndex);
+  const fileTitle =
+    file.name.replace(/\.csv$/i, "").trim() || "Imported Quiz";
+  const linkSuggestion = previous
+    ? { quiz: null, confidence: "none", candidates: [] }
+    : suggestQuizLink({
+        quizzes: getContext().quizzes || [],
+        title: fileTitle,
+        fileName: file.name,
+        date: firstDate
+      });
+  const autoQuiz =
+    linkSuggestion.confidence === "high" ? linkSuggestion.quiz : null;
   const title =
     previous?.quizTitle ||
+    autoQuiz?.title ||
     linkedQuiz?.title ||
-    file.name.replace(/\.csv$/i, "") ||
-    "Imported Quiz";
+    fileTitle;
   const date =
-    previous?.quizDate || linkedQuiz?.date || firstDate || "";
+    previous?.quizDate ||
+    autoQuiz?.date ||
+    linkedQuiz?.date ||
+    firstDate ||
+    "";
   const dateSource = previous?.quizDate
     ? "previous import"
-    : linkedQuiz?.date
+    : autoQuiz?.date || linkedQuiz?.date
       ? "linked quiz"
       : firstDate
         ? "first response"
@@ -1631,16 +2173,31 @@ async function handleFile(file) {
     replaceId: previous?.id || null,
     targetQuizId: previous?.unlinked
       ? ""
-      : previous?.quizId || linkedQuiz?.id || "",
+      : previous?.quizId || autoQuiz?.id || linkedQuiz?.id || "",
     title,
     date,
     dateSource,
     firstResponseDate: firstDate,
     passingPercent: previous?.passingPercent ?? 75,
     totalScoreIndex: columns.totalScoreIndex,
-    questions
+    questions,
+    autoLinkedQuizId: autoQuiz?.id || null,
+    linkSuggestion:
+      !previous &&
+      (linkSuggestion.confidence === "possible" ||
+        linkSuggestion.confidence === "ambiguous")
+        ? {
+            confidence: linkSuggestion.confidence,
+            candidates: linkSuggestion.candidates.map(({ quiz }) => ({
+              id: quiz.id,
+              title: quiz.title,
+              date: quiz.date
+            }))
+          }
+        : null
   };
   pendingReimportId = null;
+  expandedResponseId = null;
   render();
   document
     .querySelector("[data-qb-wizard]")
@@ -1775,6 +2332,7 @@ function completeWizardImport() {
   selectedId = record.id;
   activeTab = "overview";
   notesOpen = false;
+  expandedResponseId = null;
   wizard = null;
   pendingReimportId = null;
   render();

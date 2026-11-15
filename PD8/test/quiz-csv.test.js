@@ -6,6 +6,7 @@ import {
   detectColumns,
   detectDelimiter,
   detectQuestionType,
+  isIgnoredQuestionHeader,
   normalizeTimestamp,
   parseCSV,
   parsePoints,
@@ -19,6 +20,10 @@ const sampleText = readFileSync(
 );
 const nameQuestionText = readFileSync(
   new URL("./fixtures/albay-quiz.csv", import.meta.url),
+  "utf8"
+);
+const allTypesText = readFileSync(
+  new URL("./fixtures/gform-all-types.csv", import.meta.url),
   "utf8"
 );
 
@@ -176,6 +181,184 @@ test("detectQuestionType recognizes fill-in-the-blank and short answers", () => 
   assert.equal(
     detectQuestionType("Select all that apply: ___", [], -1),
     "multiple"
+  );
+});
+
+test("detectQuestionType keeps paragraph text with semicolons as paragraph", () => {
+  assert.equal(
+    detectQuestionType(
+      "Describe your experience with the festival.",
+      [
+        ["I enjoyed it; the street dancing was great."],
+        ["It was crowded; I would go again."]
+      ],
+      0
+    ),
+    "paragraph"
+  );
+});
+
+test("detectQuestionType keeps comma-separated single answers as single", () => {
+  assert.equal(
+    detectQuestionType(
+      "Choose the best description of the capital.",
+      [["Legazpi City, Albay"], ["Tabaco City, Albay"]],
+      0
+    ),
+    "single"
+  );
+  assert.equal(
+    detectQuestionType(
+      "What is the capital city of the province?",
+      [["Legazpi City, Albay"], ["Tabaco City, Albay"]],
+      0
+    ),
+    "single"
+  );
+});
+
+test("detectQuestionType recognizes paragraph, grid, date, and time questions", () => {
+  const parsed = parseCSV(allTypesText);
+  const columns = detectColumns(parsed.headers);
+  assert.deepEqual(
+    columns.questionColumns.map((column) =>
+      detectQuestionType(column.header, parsed.rows, column.index)
+    ),
+    [
+      "single",
+      "paragraph",
+      "single",
+      "multiple",
+      "single",
+      "grid-single",
+      "grid-single",
+      "grid-multiple",
+      "grid-multiple",
+      "date",
+      "time"
+    ]
+  );
+  assert.equal(
+    detectQuestionType(
+      "Select all municipalities in Albay. [Legazpi]",
+      [["Camalig;Malilipot"]],
+      0
+    ),
+    "grid-multiple"
+  );
+  assert.equal(
+    detectQuestionType(
+      "Match the item to its category [Mayon]",
+      [["Volcano"]],
+      0
+    ),
+    "grid-single"
+  );
+});
+
+test("detectColumns skips rating and file-upload questions with their score columns", () => {
+  const parsed = parseCSV(allTypesText);
+  const columns = detectColumns(parsed.headers);
+  assert.equal(columns.questionColumns.length, 11);
+  assert.deepEqual(
+    columns.ignoredColumns.map((column) => column.header),
+    [
+      "Rate your familiarity with Albay (1-5).",
+      "Rate the quiz difficulty.",
+      "Upload a photo of Mayon."
+    ]
+  );
+  assert.deepEqual(columns.warnings, []);
+  assert.equal(isIgnoredQuestionHeader("Rate of reaction"), false);
+  assert.equal(isIgnoredQuestionHeader("Which file format is this?"), false);
+});
+
+test("isIgnoredQuestionHeader recognizes scale, satisfaction, and file prompts", () => {
+  assert.equal(
+    isIgnoredQuestionHeader("On a scale of 1 to 5, how was the lesson?"),
+    true
+  );
+  assert.equal(
+    isIgnoredQuestionHeader("How satisfied are you with the lesson?"),
+    true
+  );
+  assert.equal(
+    isIgnoredQuestionHeader("How likely are you to recommend this quiz?"),
+    true
+  );
+  assert.equal(isIgnoredQuestionHeader("Add a file to your response"), true);
+  assert.equal(isIgnoredQuestionHeader("Rate of reaction"), false);
+  assert.equal(isIgnoredQuestionHeader("Which file format is this?"), false);
+});
+
+test("detectColumns ignores rating and file columns by their values", () => {
+  const headers = [
+    "Timestamp",
+    "How difficult was the quiz?",
+    "Mayon photo",
+    "What is the capital?"
+  ];
+  const rows = [
+    [
+      "2026/11/13 10:00:00 AM GMT+8",
+      "1",
+      "https://drive.google.com/file/d/abc123/view",
+      "Legazpi City"
+    ],
+    [
+      "2026/11/13 10:01:00 AM GMT+8",
+      "3",
+      "https://drive.google.com/file/d/def456/view",
+      "Tabaco City"
+    ]
+  ];
+  const columns = detectColumns(headers, rows);
+  assert.deepEqual(
+    columns.ignoredColumns.map((column) => column.header),
+    ["How difficult was the quiz?", "Mayon photo"]
+  );
+  assert.deepEqual(
+    columns.questionColumns.map((column) => column.header),
+    ["What is the capital?"]
+  );
+});
+
+test("value-based ignoring leaves rated questions alone when a score is present", () => {
+  const headers = [
+    "Timestamp",
+    "How difficult was the quiz?",
+    "How difficult was the quiz? [Score]",
+    "What is the capital?"
+  ];
+  const graded = detectColumns(headers, [
+    [
+      "2026/11/13 10:00:00 AM GMT+8",
+      "1",
+      "1.00 / 1",
+      "Legazpi City"
+    ]
+  ]);
+  assert.deepEqual(
+    graded.questionColumns.map((column) => column.header),
+    ["How difficult was the quiz?", "What is the capital?"]
+  );
+  assert.equal(graded.questionColumns[0].scoreIndex, 2);
+
+  const ungraded = detectColumns(headers, [
+    [
+      "2026/11/13 10:00:00 AM GMT+8",
+      "1",
+      "-- / 0",
+      "Legazpi City"
+    ]
+  ]);
+  assert.deepEqual(
+    ungraded.ignoredColumns.map((column) => column.header),
+    ["How difficult was the quiz?"]
+  );
+  assert.deepEqual(
+    ungraded.questionColumns.map((column) => column.header),
+    ["What is the capital?"]
   );
 });
 
