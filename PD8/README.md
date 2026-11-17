@@ -4,14 +4,14 @@ AiDaptable is a dependency-aware, hours-based topic scheduler with adaptive reca
 
 ## Run It
 
-This is a dependency-free ES module app. It must be served over HTTP; opening `index.html` directly will not load the modules.
+This is a dependency-free JavaScript app with a small Node.js backend. Use Node.js 18 or later; opening `index.html` directly or using Live Server will not make the local Gemini API available.
 
 ```bash
 
 npm run serve
 ```
 
-Then open [http://localhost:8000](http://localhost:8000).
+Then open [http://localhost:8000](http://localhost:8000). For AI item analysis, put your Gemini API key in `PD8/.env` as `GEMINI_API_KEY=...` before starting the server. The `.env` file is ignored by Git and is never served to the browser. See `.env.example` for the settings format.
 
 Run the pure-logic tests with:
 
@@ -77,9 +77,10 @@ npm test
 - Importing a CSV linked to a scheduled quiz replaces the existing import for that quiz after confirmation. Re-import preserves the quiz link, title, date, passing threshold, and matching question labels, types, and points. Standalone imports do not replace any scheduled quiz.
 - **Overview** shows response count, average, pass rate, score range, near-pass count, at-risk count, standard deviation, completion, possible points, points lost, score distribution, status mix, frequently missed questions, and responses needing attention. Grading-mode notices explain when only a total score or no scores are available. **Questions** adds a compact all-question table, then detailed answer distributions, inferred keys with confidence, average points, points lost, skip rate, and option-level analytics for multiple-answer questions. **Responses** sorts and filters anonymous scores, lists missed or skipped questions, and expands a detail drawer with every answer, state, points, and feedback. **Import notes** is a collapsible section with warnings, mismatches, duplicate rows, grading mode, low-confidence keys, completion, points lost, and how each question was graded.
 - Frequently missed questions are ranked by missed rate, where wrong, partial-credit, and blank answers all count as missed, then by possible points and question order. The Overview shows the top five with missed-rate bars and points lost; the Questions tab still lists every question.
+- **AI item analysis** sends question prompts, answer text grouped by count, and aggregate scores through the local Node.js backend to Gemini. The model and API key are configured once in `PD8/.env`; no key or backend settings appear in the browser UI. Names and individual response rows are not sent. Review answer text for sensitive details before sending. Generated interpretations are saved with the import and should be checked against classroom context.
 - Completion is reported two ways: graded-question completion counts only blank graded answers, while all-answer completion also counts blank ungraded questions such as a skipped paragraph. Near pass means a response is below the passing threshold but within 10 percentage points of it.
 - The import check keeps automatic mapping as the default and puts manual overrides behind a framed **Advanced mapping** toggle. The toggle exposes question inclusion, type, points, score column, feedback column, quiz link, title, date, passing threshold, and total-score column.
-- Quiz Bin data is stored separately under the `aidaptable:quizbin` key, so it does not enter the scheduling state or history. Only parsed answers and metadata are stored; the raw CSV is never uploaded or saved. Derived insights are recomputed from the stored answers each time.
+- Quiz Bin data is stored separately under the `aidaptable:quizbin` key, so it does not enter the scheduling state or history. Parsed answers and metadata are stored; the raw CSV is never uploaded or saved. Derived insights are recomputed from the stored answers each time. Aggregate data is sent to Gemini only after the teacher presses **Generate item analysis**. The local backend reads the private API key from `.env` and never returns it to the browser.
 - Deleting a scheduled quiz does not delete its import. The import keeps its title and date snapshot and is marked as no longer linked to a scheduled quiz.
 
 ## Saving
