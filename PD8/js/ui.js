@@ -338,6 +338,21 @@ function topOfSemesterDate() {
   );
 }
 
+function readjustSchedule(state, fromISO, options = {}) {
+  return rearrange(state, fromISO, {
+    ...options,
+    notBeforeISO: todayISO()
+  });
+}
+
+function getRescheduleMinDate() {
+  const start = appState.semester.startDate;
+  const today = todayISO();
+  return isInSemester(appState, today) && compareISO(today, start) > 0
+    ? today
+    : start;
+}
+
 function setupEditAllowed() {
   if (isDirty()) {
     showToast("Accept or discard calendar changes before editing setup.", "warning");
@@ -551,7 +566,7 @@ function renderSetup() {
 
   const scheduleStats = scheduleExists
     ? `<div class="notice info"><span>${counts.scheduled} scheduled · ${counts.completed} completed${counts.partial ? ` · ${counts.partial} partial` : ""} · ${counts.async} async · ${counts.unscheduled} needing attention${counts.dropped ? ` · ${counts.dropped} dropped` : ""}</span></div>`
-    : `<div class="notice"><span>The scheduler places topics in dependency order. When remaining time is sufficient, topics finish one at a time. When time is short, each ready topic reserves up to one hour and shares the rest by priority, so several topics may be left partial.</span></div>`;
+    : `<div class="notice"><span>The scheduler places topics in dependency order. When remaining time is sufficient, topics finish one at a time. When time is short, each ready topic reserves up to 30 minutes and shares the rest by priority, so several topics may be left partial.</span></div>`;
 
   setupView.innerHTML = `
     <div class="setup-shell">
@@ -588,7 +603,7 @@ function renderSetup() {
                 )
                 .join("")}
             </select>
-            <small>Topics are ordered by quiz deadline, then priority. When time is short, ready topics reserve up to one hour each and share the remainder by priority. Topics at or below this threshold become async only when no class time remains or a dependency blocks them.</small>
+            <small>Topics are ordered by quiz deadline, then priority. When time is short, ready topics reserve up to 30 minutes each and share the remainder by priority. Topics at or below this threshold become async only when no class time remains or a dependency blocks them.</small>
           </div>
         </div>
         <div class="form-field class-day-field">
@@ -716,7 +731,7 @@ function handleSetupChange(event) {
       appState,
       next.semester.startDate,
       next.semester.endDate,
-      { label }
+      { label, notBeforeISO: todayISO() }
     );
     if (!result.ok) {
       revertSetupControl(target);
@@ -1527,7 +1542,7 @@ function openQuizModal(quizId = null) {
 
     const fromISO =
       original && compareISO(original.date, date) < 0 ? original.date : date;
-    const result = rearrange(next, fromISO, { label });
+    const result = readjustSchedule(next, fromISO, { label });
     if (!result.ok) {
       setModalError(
         form,
@@ -1657,7 +1672,7 @@ function applyQuizCoverageMoves(coverages) {
     moves.length === 1
       ? `Moved ${next.quizzes.find((quiz) => quiz.id === moves[0].quizId)?.title || "quiz"} for coverage`
       : `Moved ${moves.length} quizzes for coverage`;
-  const result = rearrange(next, earliest, { label });
+  const result = readjustSchedule(next, earliest, { label });
   if (!result.ok) {
     showErrorsModal("Could not move quizzes for coverage", result.errors);
     return false;
@@ -1891,7 +1906,7 @@ function commitTopicRemoval(topic, iso, reflow) {
     return;
   }
 
-  const result = rearrange(removal.state, iso, {
+  const result = readjustSchedule(removal.state, iso, {
     label,
     removedTopicId: topic.id,
     removedMinutes: removal.removedMinutes,
@@ -1919,7 +1934,7 @@ function openSuspendDayModal(iso) {
   const form = document.createElement("form");
   form.className = "modal-form";
   form.innerHTML = `
-    <p>Suspend <strong>${escapeHTML(formatLong(iso))}</strong>? The scheduler will remove its allocated time and readjust remaining work from the earliest remaining scheduled class or the suspension date, whichever is earlier, while keeping past sessions fixed.</p>
+    <p>Suspend <strong>${escapeHTML(formatLong(iso))}</strong>? The scheduler will remove its allocated time and rebuild the affected topic blocks from today in dependency order. Sessions before today stay fixed, so a prerequisite split by the suspension finishes after today and its future dependents move after it on consecutive class days.</p>
     <div class="form-field">
       <label for="suspension-note">Reason or note (optional)</label>
       <input id="suspension-note" type="text" name="note" maxlength="120" value="${escapeHTML(defaultNote)}" placeholder="e.g. Typhoon, campus event" />
@@ -2010,7 +2025,9 @@ function openSuspendDayModal(iso) {
       });
       return true;
     }
-    const result = rearrange(next, getAutomaticReflowDate(next, iso), { label });
+    const result = readjustSchedule(next, getAutomaticReflowDate(next, iso), {
+      label
+    });
     if (!result.ok) {
       setModalError(form, result.errors[0] || "The schedule could not be rearranged.");
       return false;
@@ -2089,7 +2106,7 @@ function openSuspendRangeModal(startISO) {
   const form = document.createElement("form");
   form.className = "modal-form";
   form.innerHTML = `
-    <p>Suspend a range of dates and readjust remaining work from the earliest remaining scheduled class or the range start, whichever is earlier, while keeping past sessions fixed. Quiz days inside the range need a disposition.</p>
+    <p>Suspend a range of dates and rebuild the affected topic blocks from today in dependency order. Sessions before today stay fixed, and future dependent work follows its prerequisites on consecutive class days. Quiz days inside the range need a disposition.</p>
     <div class="grid-2">
       <div class="form-field">
         <label for="range-start">Start date</label>
@@ -2207,7 +2224,9 @@ function openSuspendRangeModal(startISO) {
       });
       return true;
     }
-    const result = rearrange(next, getAutomaticReflowDate(next, start), { label });
+    const result = readjustSchedule(next, getAutomaticReflowDate(next, start), {
+      label
+    });
     if (!result.ok) {
       setModalError(form, result.errors[0] || "The schedule could not be rearranged.");
       return false;
@@ -2243,10 +2262,10 @@ function openRescheduleModal() {
   const form = document.createElement("form");
   form.className = "modal-form";
   form.innerHTML = `
-    <p>Rebuild the remaining schedule from a chosen date. Sessions before that date stay completed; everything after is recalculated in dependency order with one-hour topic floors and priority-weighted sharing.</p>
+    <p>Rebuild the remaining schedule from a chosen date. Sessions before today stay fixed; today and later are recalculated in dependency order with 30-minute topic floors and priority-weighted sharing. Prerequisites are rebuilt before their dependents, and each topic's remaining run stays on consecutive class days.</p>
     <div class="form-field">
       <label for="reschedule-date">Readjust from</label>
-      <input id="reschedule-date" name="date" type="date" min="${escapeHTML(appState.semester.startDate)}" max="${escapeHTML(appState.semester.endDate)}" value="${escapeHTML(getSuggestedRescheduleDate())}" required />
+      <input id="reschedule-date" name="date" type="date" min="${escapeHTML(getRescheduleMinDate())}" max="${escapeHTML(appState.semester.endDate)}" value="${escapeHTML(getSuggestedRescheduleDate())}" required />
     </div>
     <div class="form-error hidden" data-form-error></div>
   `;
@@ -2264,7 +2283,7 @@ function openRescheduleModal() {
     }
     const base = appState;
     const label = `Rescheduled from ${formatShort(date)}`;
-    const result = rearrange(base, date, { label });
+    const result = readjustSchedule(base, date, { label });
     if (!result.ok) {
       setModalError(form, result.errors[0] || "The schedule could not be rearranged.");
       return false;
@@ -2309,7 +2328,7 @@ function removeSuspension(iso) {
   }
 
   const label = `Removed suspension on ${formatShort(iso)}`;
-  const result = rearrange(next, iso, { label });
+  const result = readjustSchedule(next, iso, { label });
   if (!result.ok) {
     showErrorsModal("Could not remove the suspension", result.errors);
     return;
@@ -2369,7 +2388,7 @@ function openMoveQuizModal(quizId, currentISO) {
       });
       return true;
     }
-    const result = rearrange(next, fromISO, { label });
+    const result = readjustSchedule(next, fromISO, { label });
     if (!result.ok) {
       setModalError(form, result.errors[0] || "The schedule could not be rearranged.");
       return false;
@@ -2419,7 +2438,7 @@ function requestCancelQuiz(quizId, iso) {
         });
         return;
       }
-      const result = rearrange(next, quiz.date, { label });
+      const result = readjustSchedule(next, quiz.date, { label });
       if (!result.ok) {
         showErrorsModal("Could not readjust after canceling the quiz", result.errors);
         return;
@@ -2448,7 +2467,7 @@ function restoreAsyncTopic(topicId) {
   }
   const fromISO = getSuggestedRescheduleDate();
   const label = `Restored ${topic.title}`;
-  const result = rearrange(restored, fromISO, { label });
+  const result = readjustSchedule(restored, fromISO, { label });
   if (!result.ok) {
     showErrorsModal("Could not restore the topic", result.errors);
     return;
@@ -2474,7 +2493,9 @@ function restoreUnscheduledTopic(topicId) {
     return;
   }
   const label = `Restored ${topic.title}`;
-  const result = rearrange(restored, getSuggestedRescheduleDate(), { label });
+  const result = readjustSchedule(restored, getSuggestedRescheduleDate(), {
+    label
+  });
   if (!result.ok) {
     showErrorsModal("Could not restore the topic", result.errors);
     return;
@@ -2493,7 +2514,9 @@ function retryTopic(topicId) {
   }
   const base = appState;
   const label = `Retried placement for ${topic.title}`;
-  const result = rearrange(base, getSuggestedRescheduleDate(), { label });
+  const result = readjustSchedule(base, getSuggestedRescheduleDate(), {
+    label
+  });
   if (!result.ok) {
     showErrorsModal("Could not retry placement", result.errors);
     return;
@@ -2780,7 +2803,7 @@ function init() {
       appState,
       appState.semester.startDate,
       appState.semester.endDate,
-      { label: "Restored semester boundary" }
+      { label: "Restored semester boundary", notBeforeISO: todayISO() }
     );
     if (repaired.ok) {
       appState = repaired.state;

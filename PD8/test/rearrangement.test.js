@@ -101,11 +101,20 @@ test("a long suspension spreads the shortfall across remaining topics", () => {
   assert.equal(topics.get("t4").status, STATUS.SCHEDULED);
   assert.equal(topics.get("t5").status, STATUS.SCHEDULED);
   assert.equal(topics.get("t6").status, STATUS.PARTIAL);
-  assert.equal(countScheduledMinutes(result.state, "t6"), 528);
+  assert.equal(countScheduledMinutes(result.state, "t6"), 534);
   assert.equal(topics.get("t7").status, STATUS.PARTIAL);
-  assert.equal(countScheduledMinutes(result.state, "t7"), 372);
+  assert.equal(countScheduledMinutes(result.state, "t7"), 366);
   assert.equal(topics.get("t8").status, STATUS.PARTIAL);
-  assert.equal(countScheduledMinutes(result.state, "t8"), 168);
+  assert.equal(countScheduledMinutes(result.state, "t8"), 150);
+
+  for (const cell of result.state.calendar) {
+    for (const allocation of cell.allocations) {
+      assert.ok(
+        allocation.minutes >= 30,
+        `${allocation.topicId} has a ${allocation.minutes}-minute block on ${cell.date}`
+      );
+    }
+  }
 
   assert.equal(result.summary.counts.async, 0);
   assert.equal(result.summary.counts.partial, 3);
@@ -127,6 +136,177 @@ test("a long suspension spreads the shortfall across remaining topics", () => {
     result.state.quizzes.find((quiz) => quiz.id === "q2").date,
     "2026-12-02"
   );
+});
+
+function dependencyChainState() {
+  return normalizeState({
+    semester: {
+      startDate: "2026-11-02",
+      endDate: "2026-12-18",
+      classDays: ["Mon", "Wed", "Fri"],
+      classTimes: {
+        Mon: { start: "09:00", end: "12:00" },
+        Wed: { start: "09:00", end: "12:00" },
+        Fri: { start: "09:00", end: "12:00" }
+      }
+    },
+    topics: [
+      {
+        id: "t1",
+        title: "Topic 1",
+        estimatedHours: 15,
+        priority: 5,
+        dependencies: [],
+        status: STATUS.PENDING
+      },
+      {
+        id: "t2",
+        title: "Topic 2",
+        estimatedHours: 15,
+        priority: 5,
+        dependencies: ["t1"],
+        status: STATUS.PENDING
+      },
+      {
+        id: "t3",
+        title: "Topic 3",
+        estimatedHours: 15,
+        priority: 5,
+        dependencies: ["t2"],
+        status: STATUS.PENDING
+      },
+      {
+        id: "t4",
+        title: "Topic 4",
+        estimatedHours: 15,
+        priority: 4,
+        dependencies: [],
+        status: STATUS.PENDING
+      }
+    ],
+    quizzes: [],
+    calendar: [],
+    lowPriorityThreshold: 2,
+    history: []
+  });
+}
+
+function datesBefore(state, topicId, iso) {
+  return getScheduledDates(state, topicId).filter((date) => date < iso);
+}
+
+function datesOnOrAfter(state, topicId, iso) {
+  return getScheduledDates(state, topicId).filter((date) => date >= iso);
+}
+
+test("a suspended prerequisite is rebuilt before its dependents without moving past sessions", () => {
+  const generated = generateSchedule(dependencyChainState());
+  assert.equal(generated.ok, true, generated.errors?.join(" "));
+  const state = generated.state;
+  assert.deepEqual(getScheduledDates(state, "t1"), [
+    "2026-11-02",
+    "2026-11-04",
+    "2026-11-06",
+    "2026-11-09",
+    "2026-11-11"
+  ]);
+  assert.deepEqual(getScheduledDates(state, "t2"), [
+    "2026-11-13",
+    "2026-11-16",
+    "2026-11-18",
+    "2026-11-20",
+    "2026-11-23"
+  ]);
+
+  suspendDates(state, ["2026-11-11"]);
+  const notBeforeISO = "2026-11-17";
+  const result = rearrange(state, "2026-11-23", {
+    label: "Suspended Nov 11",
+    notBeforeISO
+  });
+  assert.equal(result.ok, true, result.errors?.join(" "));
+  assert.equal(result.summary.fromDate, notBeforeISO);
+
+  // Sessions before today are never moved or recreated.
+  for (const topic of state.topics) {
+    assert.deepEqual(
+      datesBefore(result.state, topic.id, notBeforeISO),
+      datesBefore(state, topic.id, notBeforeISO),
+      `${topic.id} moved a session before ${notBeforeISO}`
+    );
+  }
+
+  // The prerequisite's suspended work lands after today, and every future
+  // dependent session follows it instead of staying on an earlier date.
+  assert.deepEqual(datesOnOrAfter(result.state, "t1", notBeforeISO), [
+    "2026-11-18"
+  ]);
+  assert.deepEqual(datesOnOrAfter(result.state, "t2", notBeforeISO), [
+    "2026-11-20",
+    "2026-11-23",
+    "2026-11-25"
+  ]);
+  assert.deepEqual(datesOnOrAfter(result.state, "t3", notBeforeISO), [
+    "2026-11-27",
+    "2026-11-30",
+    "2026-12-02",
+    "2026-12-04",
+    "2026-12-07"
+  ]);
+  assert.deepEqual(datesOnOrAfter(result.state, "t4", notBeforeISO), [
+    "2026-12-09",
+    "2026-12-11",
+    "2026-12-14",
+    "2026-12-16",
+    "2026-12-18"
+  ]);
+
+  const lastFutureDate = (topicId) => {
+    const dates = datesOnOrAfter(result.state, topicId, notBeforeISO);
+    return dates[dates.length - 1];
+  };
+  const firstFutureDate = (topicId) =>
+    datesOnOrAfter(result.state, topicId, notBeforeISO)[0];
+  assert.ok(lastFutureDate("t1") < firstFutureDate("t2"));
+  assert.ok(lastFutureDate("t2") < firstFutureDate("t3"));
+
+  for (const topic of result.state.topics) {
+    assert.equal(topic.status, STATUS.SCHEDULED);
+    assert.equal(countScheduledMinutes(result.state, topic.id), 15 * 60);
+  }
+
+  const suspendedCell = result.state.calendar.find(
+    (cell) => cell.date === "2026-11-11"
+  );
+  assert.equal(suspendedCell.type, "suspended");
+  assert.deepEqual(suspendedCell.allocations, []);
+});
+
+test("rearranged future topic runs use consecutive teaching days", () => {
+  const generated = generateSchedule(dependencyChainState());
+  assert.equal(generated.ok, true, generated.errors?.join(" "));
+  suspendDates(generated.state, ["2026-11-11"]);
+  const notBeforeISO = "2026-11-17";
+  const result = rearrange(generated.state, "2026-11-23", {
+    label: "Suspended Nov 11",
+    notBeforeISO
+  });
+  assert.equal(result.ok, true, result.errors?.join(" "));
+
+  const teachingDays = computeTeachingDays(result.state);
+  for (const topic of result.state.topics) {
+    const dates = datesOnOrAfter(result.state, topic.id, notBeforeISO);
+    for (let index = 1; index < dates.length; index += 1) {
+      const skipped = teachingDays.filter(
+        (date) => date > dates[index - 1] && date < dates[index]
+      );
+      assert.deepEqual(
+        skipped,
+        [],
+        `${topic.id} skipped teaching days between ${dates[index - 1]} and ${dates[index]}`
+      );
+    }
+  }
 });
 
 test("removing a topic holds it and lets later topics shift earlier", () => {
@@ -337,8 +517,8 @@ test("suspending the final week reflows into the earliest remaining week", () =>
   const topics = byId(result.state);
   assert.equal(topics.get("t1").status, STATUS.PARTIAL);
   assert.equal(topics.get("t2").status, STATUS.PARTIAL);
-  assert.equal(countScheduledMinutes(result.state, "t1"), 294);
-  assert.equal(countScheduledMinutes(result.state, "t2"), 246);
+  assert.equal(countScheduledMinutes(result.state, "t1"), 297);
+  assert.equal(countScheduledMinutes(result.state, "t2"), 243);
 
   const monday = result.state.calendar.find(
     (cell) => cell.date === "2026-08-03"
@@ -351,8 +531,8 @@ test("suspending the final week reflows into the earliest remaining week", () =>
   );
   assert.deepEqual(monday.allocations, [{ topicId: "t1", minutes: 180 }]);
   assert.deepEqual(wednesday.allocations, [
-    { topicId: "t1", minutes: 114 },
-    { topicId: "t2", minutes: 66 }
+    { topicId: "t1", minutes: 117 },
+    { topicId: "t2", minutes: 63 }
   ]);
   assert.deepEqual(friday.allocations, [{ topicId: "t2", minutes: 180 }]);
   assert.equal(result.summary.counts.partial, 2);
@@ -398,6 +578,34 @@ test("shortening the semester trims later topic allocations", () => {
       (cell) => !cell.allocations?.length || cell.date <= "2026-11-30"
     )
   );
+});
+
+test("semester reconciliation keeps sessions before today fixed", () => {
+  const state = generatedDemo();
+  const notBeforeISO = "2026-11-17";
+  const beforePast = new Map(
+    state.topics.map((topic) => [
+      topic.id,
+      datesBefore(state, topic.id, notBeforeISO)
+    ])
+  );
+
+  const result = reconcileSemesterDates(
+    state,
+    state.semester.startDate,
+    "2026-11-30",
+    { label: "Shortened semester", notBeforeISO }
+  );
+
+  assert.equal(result.ok, true, result.errors?.join(" "));
+  assert.equal(result.reflowed, true);
+  for (const topic of result.state.topics) {
+    assert.deepEqual(
+      datesBefore(result.state, topic.id, notBeforeISO),
+      beforePast.get(topic.id),
+      `${topic.id} moved a session before ${notBeforeISO}`
+    );
+  }
 });
 
 test("shortening the semester relocates an out-of-range quiz", () => {

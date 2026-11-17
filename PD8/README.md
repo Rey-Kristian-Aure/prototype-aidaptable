@@ -1,6 +1,6 @@
 # AiDaptable Prototype
 
-AiDaptable is a dependency-aware, hours-based topic scheduler with adaptive recalibration and quiz coverage checks. It keeps teaching blocks together, finishes topics in deadline and priority order when time is sufficient, and shares shortages across ready topics with one-hour floors and linear priority weights. It automatically moves quizzes when their covered topics finish late.
+AiDaptable is a dependency-aware, hours-based topic scheduler with adaptive recalibration and quiz coverage checks. It keeps teaching blocks together, finishes topics in deadline and priority order when time is sufficient, and shares shortages across ready topics with 30-minute floors and linear priority weights. It automatically moves quizzes when their covered topics finish late.
 
 ## Run It
 
@@ -24,10 +24,10 @@ npm test
 1. Click **Load Demo**. The demo has 53 teaching days at three hours each (159 hours total) and eight topics whose estimates total exactly 159 hours.
 2. Click **Generate Schedule**. All eight topics should fit, and every class minute should be used.
 3. Open a calendar day and choose **Suspend this day** or use **Suspend Range…**.
-   - Automatic suspension reflow starts at the earlier of the suspension date and the earliest still-upcoming allocated class, while keeping sessions before today fixed. An earlier future week can therefore be redistributed too.
+   - Automatic suspension reflow rebuilds the affected topic blocks in dependency order, keeping sessions before today fixed. A prerequisite split by the suspension finishes first, and its future dependents move after it on consecutive class days instead of staying on earlier free dates.
    - In a rebuild that starts at Sep 4, 2026, only **Recursion Intro** is left partial with three hours unplaced; **Sorting & Searching** still fits and no topic becomes async. Quiz dates stay valid.
    - In a rebuild that starts at Oct 5, 2026, the nine suspended teaching days are shared across **Objects & Dictionaries**, **Recursion Intro**, and **Sorting & Searching**, so all three are partial instead of async. **Quiz 2** automatically moves from Nov 13 to Dec 2 so its fully scheduled coverage finishes first. The change summary lists the quiz move and **Undo** restores the old date.
-   - If those dates are already past, the app keeps the past sessions fixed and reflows from the earliest upcoming allocation, so the exact split can differ.
+   - If those dates are already past, the app keeps the past sessions fixed and rebuilds from today, so the exact split can differ while prerequisites still precede their future dependents.
 4. Use the warning banner or the asynchronous sidebar to restore or drop topics. Use **Reschedule Remaining…** to retry placement. If a quiz still cannot be moved because coverage is unfinished, **Review coverage** explains which topics are short.
 5. To exercise the hours-based Flow A, note that the exact-fit demo has little spare time. Free time first: remove **Loops** from Sep 14 onward with **Remove & Leave As-Is**. Then add a 3-hour **Debugging Practice** topic at priority 5 in the inline topic table, save the batch, and use the Sep 14 day popover to add three hours of Debugging Practice. Use **Reschedule Remaining…** if you want later work to reflow around the held topic.
 
@@ -38,16 +38,18 @@ npm test
 - Topics are placed one at a time in dependency order. A topic is not ready until all of its prerequisites are fully scheduled or completed.
 - Ready topics are ordered by the earliest quiz deadline covering that topic or any dependent, then by priority descending, then by input order. Prerequisites inherit the earliest deadline of the quiz-covered topics that depend on them.
 - When all remaining needs fit, each topic is scheduled consecutively before the next starts, a day is filled before moving to a later class day, and no topic is left partial.
-- When demand exceeds remaining capacity, each ready topic first reserves up to 60 minutes (or its full remaining need), then the rest is shared in proportion to priority: priority 5 versus 4 receives a 5:4 share. Time freed by topics that need less is redistributed. Each topic's target is packed consecutively, so several topics may be partial.
-- If capacity cannot cover every 60-minute floor, floors are allocated in deadline/priority order and the next topic in that order receives any final short remainder. Topics left with zero time use the async/unscheduled threshold rules.
-- A leftover block shorter than 60 minutes is carried to the next class day when that day can still finish the topic's target. A topic's actual final remainder may be shorter when no later class capacity exists. This prevents most small topic fragments without wasting the last available minutes.
+- When demand exceeds remaining capacity, each ready topic first reserves up to 30 minutes (or its full remaining need), then the rest is shared in proportion to priority: priority 5 versus 4 receives a 5:4 share. Time freed by topics that need less is redistributed. Each topic's target is packed consecutively, so several topics may be partial.
+- If capacity cannot cover every 30-minute floor, floors are allocated in deadline/priority order. A topic receives no time rather than a fragment under 30 minutes. Topics left with zero time use the async/unscheduled threshold rules.
+- A topic is never given a fragment under 30 minutes. A sub-30-minute block is allowed only when it is the topic's entire remaining need and no larger block is possible. Otherwise a leftover block shorter than 30 minutes is carried to the next class day that can finish the topic, so no unrealistic small sessions are created.
 - Quiz days and suspended days provide no teaching time.
 - The semester start and end dates are hard boundaries. Topic allocations and quiz dates may fall on either boundary but never outside it.
 - Shortening a semester date removes outside allocations, relocates affected quizzes to a free class day inside the new range, and reflows later work. If an affected quiz has no valid class day inside the range, the date change is rejected instead of saving out-of-range work.
 - A topic that receives no time becomes asynchronous when it is at or below the low-priority threshold; a higher-priority zero-time topic becomes unscheduled and needs teacher action. A blocked prerequisite cascades to its dependents the same way.
 - Async topics are sticky until the teacher restores them.
-- Rearranging from a date keeps earlier allocations in place, clears later allocations, and rebuilds the remaining schedule with the same deadline, dependency, one-hour-floor, and priority-weighted rules.
-- Automatic suspension reflow uses the earlier of the suspension date and the earliest still-upcoming allocated class, while keeping sessions before today fixed. Manual **Reschedule Remaining…** continues to use the date chosen by the teacher.
+- Rearranging from a date keeps earlier allocations in place, clears later allocations, and rebuilds the remaining schedule with the same deadline, dependency, 30-minute-floor, and priority-weighted rules.
+- Readjustment rebuilds affected topic blocks rather than dropping a prerequisite onto an arbitrary free day. The rebuild expands back to the first session of every incomplete topic that would otherwise be split, then rebuilds prerequisites before their dependents so a topic is never scheduled before its prerequisite.
+- Sessions before today are never moved. When the teacher's current date is later than the rebuild start, the affected work is rebuilt from today: the prerequisite's remaining sessions are scheduled first on consecutive class days and all future dependent sessions move after them. Past dependent sessions stay where they were because they are already completed.
+- Automatic suspension reflow and manual **Reschedule Remaining…** both use the future-only rebuild, with the suspension date or the teacher's chosen date as the starting point.
 - After generation, a quiz change, or any reflow, quizzes whose covered topics now finish late are reconciled automatically. The schedule is rebuilt and the check repeats until quiz dates are valid or no further move is possible.
 
 ## Quiz Coverage
@@ -96,7 +98,7 @@ npm test
 - `js/models.js` — schema v2 state model, migration, validation, allocations, dependency ordering, history snapshots
 - `js/data.js` — exact-fit hours-based demo semester and quiz coverage seed
 - `js/quiz-coverage.js` — quiz coverage checks, deadline propagation, automatic move plans, and warnings
-- `js/scheduler.js` — deadline-aware fair-share allocator, 60-minute floors and block carrying, automatic reflow dates, generation, and quiz reconciliation
+- `js/scheduler.js` — deadline-aware fair-share allocator, 30-minute floors with no sub-30 fragments, automatic reflow dates, generation, and quiz reconciliation
 - `js/rearrangement.js` — readjustment, semester-boundary reconciliation, automatic quiz reconciliation, Flow A removal, async/drop/restore actions
 - `js/storage.js` — browser persistence
 - `js/calendar.js` — calendar, toolbar, legend, allocations, and async sidebar rendering
