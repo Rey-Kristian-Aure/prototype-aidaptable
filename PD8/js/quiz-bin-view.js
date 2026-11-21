@@ -73,6 +73,7 @@ let getContext = () => ({ quizzes: [] });
 let showToast = () => {};
 let bound = false;
 let fileInput = null;
+let tutorialReadOnly = false;
 let llmBusy = false;
 let llmError = "";
 
@@ -204,6 +205,11 @@ function ensureSelection() {
 }
 
 function persistBin(snapshot) {
+  if (tutorialReadOnly) {
+    bin = normalizeQuizBinState(bin);
+    ensureSelection();
+    return true;
+  }
   const result = saveQuizBin(bin);
   if (!result.ok) {
     if (snapshot) {
@@ -1791,6 +1797,37 @@ export function initQuizBinView({
 }
 
 export function renderQuizBinView() {
+  render();
+}
+
+function resetQuizBinUiState() {
+  selectedId = null;
+  activeTab = "overview";
+  wizard = null;
+  pendingReimportId = null;
+  responseSort = "score-asc";
+  showAtRiskOnly = false;
+  notesOpen = false;
+  expandedResponseId = null;
+}
+
+export function snapshotQuizBinState() {
+  return normalizeQuizBinState(bin || loadQuizBin());
+}
+
+export function setQuizBinStateForTutorial(nextState) {
+  tutorialReadOnly = true;
+  resetQuizBinUiState();
+  bin = normalizeQuizBinState(nextState);
+  ensureSelection();
+  render();
+}
+
+export function restoreQuizBinState(snapshot) {
+  tutorialReadOnly = false;
+  resetQuizBinUiState();
+  bin = snapshot ? normalizeQuizBinState(snapshot) : loadQuizBin();
+  ensureSelection();
   render();
 }
 
