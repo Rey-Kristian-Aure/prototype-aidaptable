@@ -81,6 +81,99 @@ function clampFromDate(state, fromISO) {
   return fromISO;
 }
 
+function isActiveTopic(topic) {
+  return (
+    topic &&
+    topic.status !== STATUS.DROPPED &&
+    topic.status !== STATUS.ASYNC &&
+    !topic.hold
+  );
+}
+
+function collectTransitiveDependents(state, topicId) {
+  const children = new Map();
+  for (const topic of state.topics) {
+    for (const depId of topic.dependencies) {
+      if (!children.has(depId)) {
+        children.set(depId, []);
+      }
+      children.get(depId).push(topic.id);
+    }
+  }
+
+  const dependents = new Set();
+  const stack = [...(children.get(topicId) || [])];
+  while (stack.length) {
+    const id = stack.pop();
+    if (dependents.has(id)) {
+      continue;
+    }
+    dependents.add(id);
+    for (const childId of children.get(id) || []) {
+      stack.push(childId);
+    }
+  }
+  return dependents;
+}
+
+function computeDependencySafeStart(state, requestedISO) {
+  let start = clampFromDate(state, requestedISO);
+
+  for (let guard = 0; guard <= state.topics.length + 1; guard += 1) {
+    let changed = false;
+
+    // Rebuild every incomplete topic from its first session so its block
+    // stays together instead of being split around later free dates.
+    for (const topic of state.topics) {
+      if (!isActiveTopic(topic) || getRemainingMinutes(state, topic) <= 0) {
+        continue;
+      }
+      const dates = getScheduledDates(state, topic.id);
+      if (dates.length && compareISO(dates[0], start) < 0) {
+        start = dates[0];
+        changed = true;
+      }
+    }
+
+    // A dependent must never keep sessions before its prerequisite is
+    // rescheduled. Back up to the dependent's first session so it joins the
+    // rebuild instead of being left behind on an earlier date.
+    for (const topic of state.topics) {
+      if (!isActiveTopic(topic) || getRemainingMinutes(state, topic) <= 0) {
+        continue;
+      }
+      for (const dependentId of collectTransitiveDependents(state, topic.id)) {
+        const dependent = getTopic(state, dependentId);
+        if (
+          !dependent ||
+          dependent.status === STATUS.DROPPED ||
+          dependent.status === STATUS.ASYNC
+        ) {
+          continue;
+        }
+        const dates = getScheduledDates(state, dependentId);
+        if (dates.length && compareISO(dates[0], start) < 0) {
+          start = dates[0];
+          changed = true;
+        }
+      }
+    }
+
+    if (!changed) {
+      break;
+    }
+  }
+
+  return start;
+}
+
+function resolveNotBefore(state, notBeforeISO) {
+  if (!notBeforeISO || !isInSemester(state, notBeforeISO)) {
+    return "";
+  }
+  return notBeforeISO;
+}
+
 function findFreeClassDay(state, startISO, endISO, usedDates, fromEnd) {
   let candidate = "";
   for (
@@ -217,7 +310,8 @@ export function reconcileSemesterDates(input, startDate, endDate, options = {}) 
   let result = null;
   if (reflowStart && hasSchedule(state)) {
     result = rearrange(state, reflowStart, {
-      label: options.label || "Adjusted schedule to semester dates"
+      label: options.label || "Adjusted schedule to semester dates",
+      notBeforeISO: options.notBeforeISO
     });
     if (!result.ok) {
       return result;
@@ -281,7 +375,11 @@ export function reconcileSemesterDates(input, startDate, endDate, options = {}) 
 export function rearrange(input, fromISO, options = {}) {
   const state = cloneState(input);
   clearOutOfSemesterAllocations(state);
-  const fromDate = clampFromDate(state, fromISO);
+  const requestedFromDate = clampFromDate(state, fromISO);
+  const safeStart = computeDependencySafeStart(state, requestedFromDate);
+  const notBefore = resolveNotBefore(state, options.notBeforeISO);
+  const fromDate =
+    notBefore && compareISO(safeStart, notBefore) < 0 ? notBefore : safeStart;
   const validationState = cloneState(state);
   clearTopicAssignmentsFrom(validationState, fromDate);
   const validation = validateState(validationState);

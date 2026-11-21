@@ -56,7 +56,8 @@ function questionTypeLabel(type) {
 const TABS = [
   ["overview", "Overview"],
   ["questions", "Questions"],
-  ["responses", "Responses"]
+  ["responses", "Responses"],
+  ["item-analysis", "AI item analysis"]
 ];
 
 let bin = null;
@@ -72,6 +73,9 @@ let getContext = () => ({ quizzes: [] });
 let showToast = () => {};
 let bound = false;
 let fileInput = null;
+let tutorialReadOnly = false;
+let llmBusy = false;
+let llmError = "";
 
 function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
@@ -201,6 +205,11 @@ function ensureSelection() {
 }
 
 function persistBin(snapshot) {
+  if (tutorialReadOnly) {
+    bin = normalizeQuizBinState(bin);
+    ensureSelection();
+    return true;
+  }
   const result = saveQuizBin(bin);
   if (!result.ok) {
     if (snapshot) {
@@ -869,6 +878,33 @@ function renderQuestions(insights) {
   `;
 }
 
+function renderAIItemAnalysis(record) {
+  const analysis = record.llmAnalysis;
+  const hasGradedQuestions = computeQuizInsights(record).summary.gradedQuestionCount > 0;
+  const result = analysis
+    ? `<div class="qb-ai-result">
+        <p class="qb-muted">Generated ${escapeHTML(formatDateTime(analysis.generatedAt))} · ${escapeHTML(analysis.model || "LLM")}</p>
+        <h3>Class pattern</h3><p>${escapeHTML(analysis.classPattern || "")}</p>
+      <h3>Item findings</h3>
+        ${(analysis.items || []).map((item, index) => `<article class="qb-ai-item">
+          <h4>Q${Number(item.index) + 1}: ${escapeHTML(item.prompt || `Question ${index + 1}`)}</h4>
+          <p><strong>What the results suggest:</strong> ${escapeHTML(item.interpretation || "")}</p>
+          <p><strong>Possible misconception:</strong> ${escapeHTML(item.misconception || "")}</p>
+          <p><strong>Suggested teaching response:</strong> ${escapeHTML(item.teachingAction || "")}</p>
+        </article>`).join("")}
+        <h3>Limitations</h3><p>${escapeHTML(analysis.limitations || "AI interpretation; check against your classroom context.")}</p>
+      </div>`
+    : emptyInline("No AI analysis yet. Select Generate item analysis to create one.");
+  return `<section class="card qb-panel qb-ai-panel">
+    <div class="qb-panel-head"><div><h3>AI item analysis</h3><p>Interpret question performance, recurring answer patterns, likely misconceptions, and teaching actions.</p></div></div>
+    <p class="qb-ai-privacy">This sends question prompts, answer text grouped by count, and aggregate scores to Gemini through the local server. It does not send response names or individual response records. Review answer text for sensitive details before sending.</p>
+    ${hasGradedQuestions ? "" : `<div class="notice info"><span>This import has no per-question scores, so item performance cannot be analyzed. Import a graded Google Forms quiz CSV with question [Score] columns. A total score alone is not enough for item analysis.</span></div>`}
+    ${llmError ? `<div class="notice warning"><span>${escapeHTML(llmError)}</span></div>` : ""}
+    <div class="card-actions"><button class="btn primary" type="button" data-qb-action="analyze-items" ${llmBusy || !hasGradedQuestions ? "disabled" : ""}>${llmBusy ? "Analyzing…" : analysis ? "Regenerate analysis" : "Generate item analysis"}</button></div>
+    ${result}
+  </section>`;
+}
+
 function sortResponses(responses) {
   const result = [...responses];
   if (responseSort === "score-desc") {
@@ -1221,7 +1257,8 @@ function renderReport(record) {
   const contents = {
     overview: renderOverview(insights),
     questions: renderQuestions(insights),
-    responses: renderResponses(insights)
+    responses: renderResponses(insights),
+    "item-analysis": renderAIItemAnalysis(record)
   };
   const noteCount =
     dataQuality.warnings.length +
@@ -1763,6 +1800,37 @@ export function renderQuizBinView() {
   render();
 }
 
+function resetQuizBinUiState() {
+  selectedId = null;
+  activeTab = "overview";
+  wizard = null;
+  pendingReimportId = null;
+  responseSort = "score-asc";
+  showAtRiskOnly = false;
+  notesOpen = false;
+  expandedResponseId = null;
+}
+
+export function snapshotQuizBinState() {
+  return normalizeQuizBinState(bin || loadQuizBin());
+}
+
+export function setQuizBinStateForTutorial(nextState) {
+  tutorialReadOnly = true;
+  resetQuizBinUiState();
+  bin = normalizeQuizBinState(nextState);
+  ensureSelection();
+  render();
+}
+
+export function restoreQuizBinState(snapshot) {
+  tutorialReadOnly = false;
+  resetQuizBinUiState();
+  bin = snapshot ? normalizeQuizBinState(snapshot) : loadQuizBin();
+  ensureSelection();
+  render();
+}
+
 export function quizBinHasInsights(quizId) {
   if (!quizId) {
     return false;
@@ -1843,6 +1911,8 @@ function handleClick(event) {
     requestDeleteImport(importId);
   } else if (action === "export") {
     openExportMenu(importId);
+  } else if (action === "analyze-items") {
+    runLLMItemAnalysis(actionElement);
   } else if (action === "tab") {
     activeTab = actionElement.dataset.tab || "overview";
     expandedResponseId = null;
@@ -1866,6 +1936,77 @@ function handleClick(event) {
     render();
   } else if (action === "wizard-import") {
     completeWizardImport();
+  }
+}
+
+function buildLLMAnalysisPayload(record) {
+  const insights = computeQuizInsights(record);
+  return {
+    quizTitle: record.quizTitle,
+    responseCount: insights.summary.responseCount,
+    averagePercent: insights.summary.average,
+    medianPercent: insights.summary.median,
+    passRatePercent: insights.summary.passRate,
+    passingThresholdPercent: insights.summary.passingPercent,
+    questions: insights.questions.map((question) => ({
+      index: question.index,
+      prompt: question.prompt,
+      type: question.type,
+      graded: question.graded,
+      points: question.points,
+      fullCreditCount: question.fullCredit,
+      partialCount: question.partial,
+      incorrectCount: question.incorrect,
+      blankCount: question.blank,
+      missedRatePercent: question.missedRate,
+      averagePointsRatePercent: question.averagePointsRate,
+      answerGroups: question.answerGroups.slice(0, 20).map(({ answer, count, fullCredit, partial, incorrect, blank }) => ({ answer, count, fullCredit, partial, incorrect, blank }))
+    }))
+  };
+}
+
+async function runLLMItemAnalysis() {
+  const record = getSelectedImport();
+  if (!record || llmBusy) return;
+  if (computeQuizInsights(record).summary.gradedQuestionCount === 0) {
+    llmError = "This import has no per-question scores. Import a graded Google Forms quiz CSV with question [Score] columns to analyze item performance.";
+    render();
+    return;
+  }
+  llmBusy = true;
+  llmError = "";
+  render();
+  try {
+    const response = await fetch("/api/item-analysis", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ data: buildLLMAnalysisPayload(record) })
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.error || `AI analysis failed (${response.status}).`);
+    const parsed = payload.analysis;
+    if (!parsed || typeof parsed !== "object") throw new Error("Gemini returned an unexpected response.");
+    record.llmAnalysis = {
+      generatedAt: new Date().toISOString(), model: String(payload.model || "Gemini"),
+      classPattern: String(parsed.classPattern || ""),
+      items: Array.isArray(parsed.items) ? parsed.items.slice(0, 8).map((item) => ({
+        index: clamp(Number(item.index) || 0, 0, Math.max(0, record.questions.length - 1)),
+        prompt: String(item.prompt || record.questions[Number(item.index)]?.prompt || ""),
+        interpretation: String(item.interpretation || ""),
+        misconception: String(item.misconception || ""),
+        teachingAction: String(item.teachingAction || "")
+      })) : [],
+      limitations: String(parsed.limitations || "AI-generated interpretation; use teacher judgment.")
+    };
+    const saved = saveQuizBin(bin);
+    if (!saved.ok) throw new Error(saved.error || "Analysis completed, but could not be saved.");
+    llmError = "";
+    showToast("AI item analysis generated.", "success");
+  } catch (error) {
+    llmError = error instanceof Error ? error.message : "Could not generate item analysis.";
+  } finally {
+    llmBusy = false;
+    render();
   }
 }
 
@@ -2473,8 +2614,10 @@ function openHelp() {
         questions. Questions shows answer distributions and inferred keys. Responses shows
         anonymous scores and missed questions. Import notes lists warnings, score mismatches,
         and grading details.</p>
-        <p>Quiz Bin never uploads the file. Only parsed answers and metadata are saved in
-        this browser.</p>
+        <p>Quiz Bin never uploads the original CSV file. AI item analysis sends aggregated
+        question results through the local backend to Gemini only after you request it. The
+        Gemini API key is read by the backend from the ignored <code>.env</code> file and is
+        never sent to the browser.</p>
       </div>
     `,
     actions: [{ label: "Got it", variant: "primary" }]

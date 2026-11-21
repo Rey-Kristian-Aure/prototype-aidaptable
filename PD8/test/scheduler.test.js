@@ -117,7 +117,7 @@ test("demo generation schedules all eight topics using every class minute", () =
   assert.equal(countScheduledMinutes(state, "t1"), 24 * 60);
 });
 
-test("shortage shares time linearly by priority after one-hour minimums", () => {
+test("shortage shares time linearly by priority after 30-minute minimums", () => {
   const state = makeSemesterState({
     startDate: "2026-08-03",
     endDate: "2026-08-03",
@@ -130,27 +130,27 @@ test("shortage shares time linearly by priority after one-hour minimums", () => 
   const topics = byId(result.state);
 
   assert.deepEqual(cell.allocations, [
-    { topicId: "a", minutes: 94 },
-    { topicId: "b", minutes: 86 }
+    { topicId: "a", minutes: 97 },
+    { topicId: "b", minutes: 83 }
   ]);
   assert.equal(topics.get("a").status, STATUS.PARTIAL);
   assert.equal(
     topics.get("a").asyncReason,
-    "2.43h still unplaced after priority-weighted sharing"
+    "2.38h still unplaced after priority-weighted sharing"
   );
   assert.equal(topics.get("b").status, STATUS.PARTIAL);
   assert.equal(
     topics.get("b").asyncReason,
-    "2.57h still unplaced after priority-weighted sharing"
+    "2.62h still unplaced after priority-weighted sharing"
   );
-  assert.equal(countScheduledMinutes(result.state, "a"), 94);
-  assert.equal(countScheduledMinutes(result.state, "b"), 86);
+  assert.equal(countScheduledMinutes(result.state, "a"), 97);
+  assert.equal(countScheduledMinutes(result.state, "b"), 83);
   assert.equal(summarizeGeneration(result.state).partial, 2);
   assert.equal(summarizeGeneration(result.state).async, 0);
   assert.equal(summarizeGeneration(result.state).unscheduled, 0);
 });
 
-test("one-hour floors give each ready topic a block when capacity is tight", () => {
+test("30-minute floors give each ready topic a block when capacity is tight", () => {
   const state = makeSemesterState({
     startDate: "2026-08-03",
     endDate: "2026-08-03",
@@ -191,13 +191,13 @@ test("full scheduling remains sequential when all ready work fits", () => {
   assert.equal(result.state.topics.every((item) => item.status === STATUS.SCHEDULED), true);
 });
 
-test("a short day is skipped so a topic can continue on the next class day", () => {
+test("a day shorter than 30 minutes is skipped so a topic can continue later", () => {
   const state = makeSemesterState({
     startDate: "2026-08-03",
     endDate: "2026-08-05",
     classDays: ["Mon", "Wed"],
     classTimes: {
-      Mon: { start: "09:00", end: "09:30" },
+      Mon: { start: "09:00", end: "09:20" },
       Wed: { start: "09:00", end: "11:00" }
     },
     topics: [topic("a", 2, 5)]
@@ -233,6 +233,64 @@ test("the final short remainder may use the last available class day", () => {
   assert.deepEqual(monday.allocations, [{ topicId: "a", minutes: 90 }]);
   assert.deepEqual(wednesday.allocations, [{ topicId: "a", minutes: 30 }]);
   assert.equal(byId(result.state).get("a").status, STATUS.SCHEDULED);
+});
+
+test("a shortage never starts a topic with a fragment under 30 minutes", () => {
+  const state = makeSemesterState({
+    startDate: "2026-08-03",
+    endDate: "2026-08-03",
+    classDays: ["Mon"],
+    classTimes: { Mon: { start: "09:00", end: "09:30" } },
+    topics: [topic("a", 25 / 60, 5), topic("b", 25 / 60, 5)]
+  });
+  const result = generateSchedule(state);
+  assert.equal(result.ok, true, result.errors?.join(" "));
+  const monday = result.state.calendar.find((cell) => cell.date === "2026-08-03");
+
+  assert.deepEqual(monday.allocations, [{ topicId: "a", minutes: 25 }]);
+  assert.equal(byId(result.state).get("a").status, STATUS.SCHEDULED);
+  assert.equal(byId(result.state).get("b").status, STATUS.UNSCHEDULED);
+  assert.equal(countScheduledMinutes(result.state, "b"), 0);
+});
+
+test("a topic is kept whole when a short leftover day precedes a full day", () => {
+  const state = makeSemesterState({
+    startDate: "2026-08-03",
+    endDate: "2026-08-05",
+    classDays: ["Mon", "Wed"],
+    topics: [topic("a", 2.5, 5), topic("b", 55 / 60, 5)]
+  });
+  const result = generateSchedule(state);
+  assert.equal(result.ok, true, result.errors?.join(" "));
+  const monday = result.state.calendar.find((cell) => cell.date === "2026-08-03");
+  const wednesday = result.state.calendar.find(
+    (cell) => cell.date === "2026-08-05"
+  );
+
+  assert.deepEqual(monday.allocations, [{ topicId: "a", minutes: 150 }]);
+  assert.deepEqual(wednesday.allocations, [{ topicId: "b", minutes: 55 }]);
+  assert.equal(byId(result.state).get("b").status, STATUS.SCHEDULED);
+  assert.equal(countScheduledMinutes(result.state, "b"), 55);
+});
+
+test("a final remainder under 30 minutes is held back as a valid block", () => {
+  const state = makeSemesterState({
+    startDate: "2026-08-03",
+    endDate: "2026-08-05",
+    classDays: ["Mon", "Wed"],
+    topics: [topic("a", 3.1, 5)]
+  });
+  const result = generateSchedule(state);
+  assert.equal(result.ok, true);
+  const monday = result.state.calendar.find((cell) => cell.date === "2026-08-03");
+  const wednesday = result.state.calendar.find(
+    (cell) => cell.date === "2026-08-05"
+  );
+
+  assert.deepEqual(monday.allocations, [{ topicId: "a", minutes: 156 }]);
+  assert.deepEqual(wednesday.allocations, [{ topicId: "a", minutes: 30 }]);
+  assert.equal(byId(result.state).get("a").status, STATUS.SCHEDULED);
+  assert.equal(countScheduledMinutes(result.state, "a"), 186);
 });
 
 test("quiz deadlines order topics before flexible work", () => {

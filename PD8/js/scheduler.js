@@ -121,7 +121,7 @@ export function buildCalendar(state) {
   return calendar;
 }
 
-export const MIN_TOPIC_BLOCK_MINUTES = 60;
+export const MIN_TOPIC_BLOCK_MINUTES = 30;
 
 function priorityComparator(state, orderIndex, deadlines) {
   return (leftId, rightId) => {
@@ -174,15 +174,18 @@ function computeFairShareTargets(state, readyIds, queued, capacity, compareReady
   if (floorTotal > capacity) {
     let remaining = capacity;
     for (const topicId of sorted) {
+      const need = queued.get(topicId) || 0;
+      const floor = Math.min(need, MIN_TOPIC_BLOCK_MINUTES);
       if (remaining <= 0) {
         targets.set(topicId, 0);
         continue;
       }
-      const floor = Math.min(
-        queued.get(topicId) || 0,
-        MIN_TOPIC_BLOCK_MINUTES
-      );
       const amount = Math.min(floor, remaining);
+      if (amount < MIN_TOPIC_BLOCK_MINUTES && amount < need) {
+        // Do not start a topic with a fragment under 30 minutes.
+        targets.set(topicId, 0);
+        continue;
+      }
       targets.set(topicId, amount);
       remaining -= amount;
     }
@@ -275,6 +278,16 @@ function allocateFairly(state, fromISO, queued, statusMap) {
 
   let cursorIndex = 0;
 
+  const hasSlotCapacityAtOrAfter = (startIndex, amount) => {
+    for (let index = startIndex; index < slots.length; index += 1) {
+      const capacity = Math.max(0, slots[index].capacity - slots[index].used);
+      if (capacity >= amount) {
+        return true;
+      }
+    }
+    return false;
+  };
+
   const allocateTopic = (topicId, target) => {
     let left = Math.max(0, Math.round(target));
     let allocated = 0;
@@ -289,26 +302,74 @@ function allocateFairly(state, fromISO, queued, statusMap) {
         continue;
       }
 
-      const finishesTopic = left <= capacity;
-      if (
-        !finishesTopic &&
-        capacity < MIN_TOPIC_BLOCK_MINUTES &&
-        capacityFrom(slotIndex + 1) >= left
-      ) {
+      // Never append a tiny tail to an already-started topic. Leave the
+      // remainder unplaced instead of creating an unrealistic fragment.
+      if (left < MIN_TOPIC_BLOCK_MINUTES && allocated > 0) {
+        break;
+      }
+
+      let take = 0;
+      let endsTopic = false;
+
+      if (left <= capacity) {
+        take = left;
+        endsTopic = true;
+      } else if (capacity < MIN_TOPIC_BLOCK_MINUTES) {
+        // Too short for a valid block. Skip it unless it can hold the
+        // topic's entire remaining need in one piece.
+        if (
+          allocated === 0 &&
+          left < MIN_TOPIC_BLOCK_MINUTES &&
+          capacity >= left
+        ) {
+          take = left;
+          endsTopic = true;
+        } else {
+          slotIndex += 1;
+          continue;
+        }
+      } else {
+        take = capacity;
+        const remainder = left - take;
+
+        if (remainder < MIN_TOPIC_BLOCK_MINUTES) {
+          const reduced = left - MIN_TOPIC_BLOCK_MINUTES;
+          if (
+            reduced >= MIN_TOPIC_BLOCK_MINUTES &&
+            hasSlotCapacityAtOrAfter(slotIndex + 1, MIN_TOPIC_BLOCK_MINUTES)
+          ) {
+            // Hold back a full final block for a later class day.
+            take = reduced;
+          } else if (
+            allocated === 0 &&
+            hasSlotCapacityAtOrAfter(slotIndex + 1, left)
+          ) {
+            // Starting here would leave a sub-30 tail. Keep the topic whole
+            // on a later class day instead of splitting it.
+            slotIndex += 1;
+            continue;
+          } else {
+            // No later day can hold a valid block, so abandon the tiny tail.
+            endsTopic = true;
+          }
+        }
+      }
+
+      if (take <= 0) {
         slotIndex += 1;
         continue;
       }
 
-      const take = Math.min(capacity, left);
       addCellAllocation(cellByDate.get(slot.date), topicId, take);
       slot.used += take;
       left -= take;
       allocated += take;
       lastUsedIndex = slotIndex;
 
-      if (take >= capacity) {
-        slotIndex += 1;
+      if (endsTopic) {
+        break;
       }
+      slotIndex += 1;
     }
 
     if (allocated > 0) {

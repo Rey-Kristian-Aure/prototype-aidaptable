@@ -182,7 +182,24 @@ function normalizeImport(raw, index) {
       inferredKeyCount,
       missingKeyCount
     },
-    warnings: stringList(source.warnings)
+    warnings: stringList(source.warnings),
+    llmAnalysis: source.llmAnalysis && typeof source.llmAnalysis === "object"
+      ? {
+          generatedAt: clean(source.llmAnalysis.generatedAt),
+          model: clean(source.llmAnalysis.model),
+          classPattern: clean(source.llmAnalysis.classPattern),
+          items: Array.isArray(source.llmAnalysis.items)
+            ? source.llmAnalysis.items.slice(0, 8).map((item, itemIndex) => ({
+                index: Math.max(0, finiteNumber(item?.index, itemIndex) ?? itemIndex),
+                prompt: clean(item?.prompt),
+                interpretation: clean(item?.interpretation),
+                misconception: clean(item?.misconception),
+                teachingAction: clean(item?.teachingAction)
+              }))
+            : [],
+          limitations: clean(source.llmAnalysis.limitations)
+        }
+      : null
   };
 }
 
