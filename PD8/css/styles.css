@@ -2645,6 +2645,46 @@ input[type="range"] {
   gap: 14px;
 }
 
+.qb-ai-panel {
+  display: grid;
+  gap: 14px;
+}
+
+.qb-ai-privacy {
+  margin: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  color: var(--muted);
+  background: var(--surface);
+  font-size: 0.88rem;
+}
+
+.qb-ai-result {
+  display: grid;
+  gap: 8px;
+}
+
+.qb-ai-result h3,
+.qb-ai-result p {
+  margin: 0;
+}
+
+.qb-ai-item {
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+
+.qb-ai-item h4 {
+  margin: 0 0 8px;
+}
+
+.qb-ai-item p + p {
+  margin-top: 6px;
+}
+
 .qb-two-col {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
