@@ -101,7 +101,7 @@ export const TUTORIAL_STEPS = Object.freeze([
     title: "Keep an eye on asynchronous work",
     body: "When class time runs out, low-priority topics can become asynchronous instead of silently disappearing. They stay here until you restore them and readjust, or drop them. This demo fits every topic, so the panel is empty on purpose.",
     view: "calendar",
-    target: "#async-sidebar .sidebar-title",
+    target: "#async-sidebar .async-intro",
     shape: "rect",
     padding: 10,
     placement: "left"
@@ -222,8 +222,6 @@ export function createTutorialController({
   let exitButton = null;
   let previousFocus = null;
   let repositionFrame = 0;
-  let transitionFrame = 0;
-  let transitioning = false;
   const inertedRegions = [];
 
   function setAppInert(enabled) {
@@ -316,9 +314,6 @@ export function createTutorialController({
     if (!targetRect) {
       return "center";
     }
-    if (step.placement && step.placement !== "auto") {
-      return step.placement;
-    }
     const cardWidth = card.offsetWidth;
     const cardHeight = card.offsetHeight;
     const space = {
@@ -327,17 +322,22 @@ export function createTutorialController({
       right: window.innerWidth - targetRect.right,
       left: targetRect.left
     };
-    if (space.below >= cardHeight + CARD_GAP + VIEWPORT_MARGIN) {
-      return "below";
+    const fits = (placement) =>
+      space[placement] >=
+      (placement === "below" || placement === "above" ? cardHeight : cardWidth) +
+        CARD_GAP +
+        VIEWPORT_MARGIN;
+    const preferred = step.placement && step.placement !== "auto" ? step.placement : null;
+    if (preferred && fits(preferred)) {
+      return preferred;
     }
-    if (space.above >= cardHeight + CARD_GAP + VIEWPORT_MARGIN) {
-      return "above";
+    for (const placement of ["below", "above", "right", "left"]) {
+      if (fits(placement)) {
+        return placement;
+      }
     }
-    if (space.right >= cardWidth + CARD_GAP + VIEWPORT_MARGIN) {
-      return "right";
-    }
-    if (space.left >= cardWidth + CARD_GAP + VIEWPORT_MARGIN) {
-      return "left";
+    if (preferred) {
+      return preferred;
     }
     return Object.entries(space).sort((left, right) => right[1] - left[1])[0][0];
   }
@@ -428,35 +428,24 @@ export function createTutorialController({
       return;
     }
     const step = steps[index];
-    transitioning = true;
-    card.classList.remove("is-visible");
     if (step.view) {
       onViewChange(step.view);
     }
     updateCard(step);
-    window.cancelAnimationFrame(transitionFrame);
-    transitionFrame = window.requestAnimationFrame(() => {
-      window.requestAnimationFrame(() => {
-        if (!active) {
-          return;
-        }
-        const target = resolveTarget(step);
-        if (target && scroll) {
-          const rect = target.getBoundingClientRect();
-          if (rect.top < 72 || rect.bottom > window.innerHeight - 72) {
-            target.scrollIntoView({ block: "center", inline: "nearest" });
-          }
-        }
-        positionStep(step, target);
-        card.classList.add("is-visible");
-        card.focus({ preventScroll: true });
-        transitioning = false;
-      });
-    });
+    const target = resolveTarget(step);
+    if (target && scroll) {
+      const rect = target.getBoundingClientRect();
+      if (rect.top < 72 || rect.bottom > window.innerHeight - 72) {
+        target.scrollIntoView({ block: "center", inline: "nearest" });
+      }
+    }
+    positionStep(step, target);
+    card.classList.add("is-visible");
+    card.focus({ preventScroll: true });
   }
 
   function goTo(nextIndex) {
-    if (!active || transitioning) {
+    if (!active) {
       return;
     }
     const bounded = clamp(nextIndex, 0, steps.length - 1);
@@ -551,7 +540,6 @@ export function createTutorialController({
     window.removeEventListener("scroll", scheduleReposition, true);
     document.removeEventListener("keydown", handleKeydown, true);
     window.cancelAnimationFrame(repositionFrame);
-    window.cancelAnimationFrame(transitionFrame);
     document.body.classList.remove("tutorial-active");
     setAppInert(false);
     root?.remove();
@@ -594,7 +582,6 @@ export function createTutorialController({
     active = true;
     skipped = false;
     index = 0;
-    transitioning = false;
     previousFocus =
       document.activeElement instanceof HTMLElement ? document.activeElement : null;
     ensureDom();

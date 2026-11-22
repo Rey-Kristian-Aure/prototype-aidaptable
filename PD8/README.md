@@ -31,6 +31,14 @@ npm test
 4. Use the warning banner or the asynchronous sidebar to restore or drop topics. Use **Reschedule Remaining…** to retry placement. If a quiz still cannot be moved because coverage is unfinished, **Review coverage** explains which topics are short.
 5. To exercise the hours-based Flow A, note that the exact-fit demo has little spare time. Free time first: remove **Loops** from Sep 14 onward with **Remove & Leave As-Is**. Then add a 3-hour **Debugging Practice** topic at priority 5 in the inline topic table, save the batch, and use the Sep 14 day popover to add three hours of Debugging Practice. Use **Reschedule Remaining…** if you want later work to reflow around the held topic.
 
+## Guided Demo
+
+- Click **Guided Demo** in the header for a 13-step tour of Setup, Calendar, and Quiz Bin. It is separate from **Load Demo**, and the built-in demo semester is unchanged.
+- The tour uses its own temporary semester: Sep 7–Dec 11, 2026, Mon/Wed/Fri from 9:00–12:00, five topics totaling 117 hours, two checkpoints, and one suspended day. The temporary Quiz Bin report covers **Checkpoint 1** with six anonymous responses, three inferred keys, a 75% average, and a 50% pass rate.
+- The tour generates its schedule before the first step: 39 teaching days are allocated, all five topics are scheduled, and no quiz coverage warnings remain.
+- Each step highlights the relevant controls with a spotlight, pointer, and text card. Use **Next**, **Back**, **Skip tour**, or **Exit**. The right and left arrow keys move between steps, and Escape exits. The final step's **Finish tour** returns to the workspace.
+- The tour never writes to `aidaptable` or `aidaptable:quizbin`. Quiz Bin is read-only while the temporary report is shown. On exit, the app restores the previous view, calendar month and mode, scroll position, Setup draft rows, pending change summary, and Quiz Bin data.
+
 ## Scheduling Rules
 
 - Every topic has an estimated number of hours. Each selected weekday has its own start and end time, so teaching capacity is measured in minutes rather than sessions.
@@ -110,5 +118,7 @@ npm test
 - `js/quiz-insights.js` — class, question, response, option-level, grading-mode, points-lost, near-pass, key-confidence, and data-quality aggregations plus CSV exports
 - `js/quiz-storage.js` — separate `aidaptable:quizbin` persistence, schema migration, and normalization
 - `js/quiz-bin-view.js` — Quiz Bin screen, import check, auto-link notices, report tabs, response detail drawer, import notes, deletion, and exports
+- `js/tutorial.js` — guided demo controller, tour steps, spotlight and pointer placement, keyboard controls, and focus handling
+- `js/tutorial-data.js` — isolated tutorial semester, topics, quizzes, suspension, and Quiz Bin demo report
 - `js/ui.js` — app state, inline topic batch editor, class timetable, calendar actions, summary, and event wiring
-- `test/` — scheduling, quiz coverage, recalibration, CSV parsing, scoring, insights, quiz-link matching, and Quiz Bin storage tests
+- `test/` — scheduling, quiz coverage, recalibration, CSV parsing, scoring, insights, quiz-link matching, Quiz Bin storage, and guided demo data tests
