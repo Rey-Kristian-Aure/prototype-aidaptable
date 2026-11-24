@@ -1,0 +1,13 @@
+// The guided demo can hand this exact CSV to the real Quiz Bin import wizard
+// without opening a native file picker. The same file is available for download
+// at examples/checkpoint-1-responses.csv.
+export const TUTORIAL_QUIZ_CSV_FILE_NAME = "checkpoint-1-responses.csv";
+
+export const TUTORIAL_QUIZ_CSV_TEXT = `Timestamp,Student Name,Email Address,Score,Which digit is in the hundredths place in 4.27?,Which digit is in the hundredths place in 4.27? [Score],Which digit is in the hundredths place in 4.27? [Feedback],Select all fractions equivalent to 1/2.,Select all fractions equivalent to 1/2. [Score],Select all fractions equivalent to 1/2. [Feedback],What is 0.75 written as a fraction in simplest form?,What is 0.75 written as a fraction in simplest form? [Score],What is 0.75 written as a fraction in simplest form? [Feedback]
+2026-10-02 09:10:00,Ana Reyes,ana.reyes@example.com,3.00 / 3,2,1.00 / 1,,"2/4, 3/6, 5/10",1.00 / 1,,3/4,1.00 / 1,
+2026-10-02 09:11:00,Ben Cruz,ben.cruz@example.com,2.50 / 3,2,1.00 / 1,,"2/4, 3/6",0.50 / 1,,3/4,1.00 / 1,
+2026-10-02 09:12:00,Cara Lim,cara.lim@example.com,2.00 / 3,7,0.00 / 1,,"2/4, 3/6, 5/10",1.00 / 1,,3/4,1.00 / 1,
+2026-10-02 09:13:00,Dan Perez,dan.perez@example.com,1.00 / 3,2,1.00 / 1,,2/4,0.00 / 1,,7/5,0.00 / 1,
+2026-10-02 09:14:00,Eve Santos,eve.santos@example.com,2.00 / 3,,-- / 1,,"2/4, 3/6, 5/10",1.00 / 1,,3/4,1.00 / 1,
+2026-10-02 09:15:00,Finn Garcia,finn.garcia@example.com,3.00 / 3,2,1.00 / 1,,"2/4, 3/6, 5/10",1.00 / 1,,3/4,1.00 / 1,
+`;

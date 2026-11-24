@@ -71,6 +71,7 @@ import {
 } from "./quiz-coverage.js";
 import {
   focusQuizBinImportForQuiz,
+  importQuizBinFileForTutorial,
   initQuizBinView,
   quizBinHasInsights,
   renderQuizBinView,
@@ -81,9 +82,13 @@ import {
 } from "./quiz-bin-view.js";
 import { createTutorialController, TUTORIAL_STEPS } from "./tutorial.js";
 import {
-  createTutorialDemoState,
-  createTutorialQuizBinState
+  createEmptyTutorialQuizBinState,
+  createTutorialDemoState
 } from "./tutorial-data.js";
+import {
+  TUTORIAL_QUIZ_CSV_FILE_NAME,
+  TUTORIAL_QUIZ_CSV_TEXT
+} from "./tutorial-csv.js";
 
 const setupView = document.getElementById("setup-view");
 const calendarView = document.getElementById("calendar-view");
@@ -2743,7 +2748,7 @@ function startTutorial() {
     closeDayPopover();
     closeModal();
     hideChangeSummary();
-    setQuizBinStateForTutorial(createTutorialQuizBinState());
+    setQuizBinStateForTutorial(createEmptyTutorialQuizBinState());
     renderAll();
     window.scrollTo(0, 0);
     tutorialController.start();
@@ -2801,9 +2806,18 @@ function initTutorial() {
   }
   tutorialController = createTutorialController({
     steps: TUTORIAL_STEPS,
+    getState: () => appState,
     onViewChange: (view) => {
       if (currentView !== view) {
         switchView(view);
+      }
+    },
+    onAction: (actionId) => {
+      if (actionId === "use-sample-csv") {
+        importQuizBinFileForTutorial({
+          name: TUTORIAL_QUIZ_CSV_FILE_NAME,
+          text: TUTORIAL_QUIZ_CSV_TEXT
+        });
       }
     },
     onFinish: (reason) => exitTutorial(reason)

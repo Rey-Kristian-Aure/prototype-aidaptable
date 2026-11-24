@@ -74,6 +74,7 @@ let showToast = () => {};
 let bound = false;
 let fileInput = null;
 let tutorialReadOnly = false;
+let tutorialSession = 0;
 let llmBusy = false;
 let llmError = "";
 
@@ -1817,6 +1818,7 @@ export function snapshotQuizBinState() {
 
 export function setQuizBinStateForTutorial(nextState) {
   tutorialReadOnly = true;
+  tutorialSession += 1;
   resetQuizBinUiState();
   bin = normalizeQuizBinState(nextState);
   ensureSelection();
@@ -1825,10 +1827,28 @@ export function setQuizBinStateForTutorial(nextState) {
 
 export function restoreQuizBinState(snapshot) {
   tutorialReadOnly = false;
+  tutorialSession += 1;
   resetQuizBinUiState();
   bin = snapshot ? normalizeQuizBinState(snapshot) : loadQuizBin();
   ensureSelection();
   render();
+}
+
+export function importQuizBinFileForTutorial({ name, text } = {}) {
+  if (!tutorialReadOnly) {
+    return false;
+  }
+  const contents = String(text || "");
+  if (!contents) {
+    return false;
+  }
+  const fileName = String(name || "").trim() || "tutorial-responses.csv";
+  const file = new File([contents], fileName, { type: "text/csv" });
+  const session = tutorialSession;
+  handleFile(file, {
+    shouldContinue: () => tutorialReadOnly && tutorialSession === session
+  });
+  return true;
 }
 
 export function quizBinHasInsights(quizId) {
@@ -2179,8 +2199,8 @@ function handleDrop(event) {
   }
 }
 
-async function handleFile(file) {
-  if (!file) {
+async function handleFile(file, { shouldContinue = () => true } = {}) {
+  if (!file || !shouldContinue()) {
     return;
   }
   const lowerName = String(file.name || "").toLowerCase();
@@ -2211,6 +2231,10 @@ async function handleFile(file) {
     text = await file.text();
   } catch {
     showToast("The file could not be read. Try downloading it again.", "danger");
+    pendingReimportId = null;
+    return;
+  }
+  if (!shouldContinue()) {
     pendingReimportId = null;
     return;
   }

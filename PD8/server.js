@@ -11,7 +11,8 @@ const MIME_TYPES = {
   ".html": "text/html; charset=utf-8",
   ".css": "text/css; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
-  ".svg": "image/svg+xml"
+  ".svg": "image/svg+xml",
+  ".csv": "text/csv; charset=utf-8"
 };
 
 // ---------------------------------------------------------------------------
@@ -574,7 +575,11 @@ async function serveStatic(request, response, pathname) {
     return;
   }
   const normalizedPath = path.posix.normalize(relativePath.replaceAll("\\", "/"));
-  const allowed = normalizedPath === "index.html" || normalizedPath.startsWith("js/") || normalizedPath.startsWith("css/");
+  const allowed =
+    normalizedPath === "index.html" ||
+    normalizedPath.startsWith("js/") ||
+    normalizedPath.startsWith("css/") ||
+    normalizedPath.startsWith("examples/");
   const absolutePath = path.resolve(ROOT, normalizedPath);
   if (!allowed || !absolutePath.startsWith(`${ROOT}${path.sep}`)) {
     response.writeHead(404).end("Not found");

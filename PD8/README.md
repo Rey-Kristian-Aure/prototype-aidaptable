@@ -33,11 +33,12 @@ npm test
 
 ## Guided Demo
 
-- Click **Guided Demo** in the header for a 13-step tour of Setup, Calendar, and Quiz Bin. It is separate from **Load Demo**, and the built-in demo semester is unchanged.
-- The tour uses its own temporary semester: Sep 7–Dec 11, 2026, Mon/Wed/Fri from 9:00–12:00, five topics totaling 117 hours, two checkpoints, and one suspended day. The temporary Quiz Bin report covers **Checkpoint 1** with six anonymous responses, three inferred keys, a 75% average, and a 50% pass rate.
-- The tour generates its schedule before the first step: 39 teaching days are allocated, all five topics are scheduled, and no quiz coverage warnings remain.
-- Each step highlights the relevant controls with a spotlight, pointer, and text card. Use **Next**, **Back**, **Skip tour**, or **Exit**. The right and left arrow keys move between steps, and Escape exits. The final step's **Finish tour** returns to the workspace.
-- The tour never writes to `aidaptable` or `aidaptable:quizbin`. Quiz Bin is read-only while the temporary report is shown. On exit, the app restores the previous view, calendar month and mode, scroll position, Setup draft rows, pending change summary, and Quiz Bin data.
+- Click **Guided Demo** in the header for a 16-step, hands-on tour of Setup, Calendar, and Quiz Bin. It is separate from **Load Demo**, and the built-in demo semester is unchanged.
+- The tour uses its own temporary semester: Sep 7–Dec 11, 2026, Mon/Wed/Fri from 9:00–12:00, five topics totaling 117 hours, two checkpoints, and one suspended day.
+- The tour generates its schedule before the first step: 39 teaching days are allocated, all five topics are scheduled, and no quiz coverage warnings remain. During the tour you change **Fractions** from 24 to 21 hours, regenerate the schedule, remove the Nov 30 suspension, and review the resulting change summary.
+- The temporary Quiz Bin starts empty so the tour can import **`examples/checkpoint-1-responses.csv`** through the real import wizard. Use **Use sample CSV** on the tour card or **Download sample CSV** to keep the file. The import produces the **Checkpoint 1** report with six anonymous responses, three inferred keys, a 75% average, and a 50% pass rate.
+- Each step highlights the relevant controls with a spotlight, pointer, and text card. Steps marked **Your turn** unlock the app and wait for the real change. Until the task is detected, **Next** acts as **Check task** and shows a hint; generation, CSV import, and wizard completion advance automatically. Use **Next**, **Back**, **Skip tour**, or **Exit**. The right and left arrow keys move between steps, and Escape exits unless a form control or popover has focus. The final step's **Finish tour** returns to the workspace.
+- The tour never writes to `aidaptable` or `aidaptable:quizbin`. Quiz Bin imports run through the normal wizard and render from the temporary state, but persistence is disabled. On exit, the app restores the previous view, calendar month and mode, scroll position, Setup draft rows, pending change summary, and Quiz Bin data.
 
 ## Scheduling Rules
 
@@ -118,7 +119,9 @@ npm test
 - `js/quiz-insights.js` — class, question, response, option-level, grading-mode, points-lost, near-pass, key-confidence, and data-quality aggregations plus CSV exports
 - `js/quiz-storage.js` — separate `aidaptable:quizbin` persistence, schema migration, and normalization
 - `js/quiz-bin-view.js` — Quiz Bin screen, import check, auto-link notices, report tabs, response detail drawer, import notes, deletion, and exports
-- `js/tutorial.js` — guided demo controller, tour steps, spotlight and pointer placement, keyboard controls, and focus handling
-- `js/tutorial-data.js` — isolated tutorial semester, topics, quizzes, suspension, and Quiz Bin demo report
+- `js/tutorial.js` — guided demo controller, interactive task steps, polling, spotlight and pointer placement, keyboard controls, and focus handling
+- `js/tutorial-data.js` — isolated tutorial semester, topics, quizzes, suspension, empty Quiz Bin seed, and demo report
+- `js/tutorial-csv.js` — sample Google Forms CSV used by the temporary Quiz Bin import
+- `examples/checkpoint-1-responses.csv` — downloadable copy of the guided demo's Quiz Bin sample
 - `js/ui.js` — app state, inline topic batch editor, class timetable, calendar actions, summary, and event wiring
-- `test/` — scheduling, quiz coverage, recalibration, CSV parsing, scoring, insights, quiz-link matching, Quiz Bin storage, and guided demo data tests
+- `test/` — scheduling, quiz coverage, recalibration, CSV parsing, scoring, insights, quiz-link matching, Quiz Bin storage, and guided demo data and step tests

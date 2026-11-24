@@ -1,8 +1,8 @@
 import { normalizeState, STATUS } from "./models.js";
 import { normalizeQuizBinState } from "./quiz-storage.js";
 
-// The guided tour deliberately uses its own semester and quiz report. It never
-// reads or writes the scheduling state or the Quiz Bin storage keys.
+// The guided tour deliberately uses its own semester and Quiz Bin state. It
+// never reads or writes the scheduling state or the Quiz Bin storage keys.
 export const TUTORIAL_SEMESTER = Object.freeze({
   startDate: "2026-09-07",
   endDate: "2026-12-11",
@@ -165,6 +165,10 @@ function tutorialResponse(id, submittedAtRaw, answers) {
     unparsableScoreCells: 0,
     answers
   };
+}
+
+export function createEmptyTutorialQuizBinState() {
+  return normalizeQuizBinState({ version: 2, imports: [] });
 }
 
 export function createTutorialQuizBinState() {

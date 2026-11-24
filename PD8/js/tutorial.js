@@ -1,34 +1,62 @@
 const CARD_GAP = 16;
 const VIEWPORT_MARGIN = 12;
+const TASK_POLL_MS = 250;
+const AUTO_ADVANCE_MS = 900;
 
 function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
 }
 
-function firstMatchingDay(predicate) {
-  const days = document.querySelectorAll(
-    "#calendar-grid .calendar-day:not(.other-month)"
-  );
-  for (const day of days) {
-    if (predicate(day)) {
-      return day;
-    }
+function calendarDay(iso) {
+  return document.querySelector(`#calendar-grid [data-date="${iso}"]`);
+}
+
+function calendarGridMode() {
+  const grid = document.querySelector("#calendar-grid .calendar-days");
+  if (!grid) {
+    return "";
   }
-  return null;
+  if (grid.classList.contains("week")) {
+    return "week";
+  }
+  if (grid.classList.contains("month")) {
+    return "month";
+  }
+  return "";
+}
+
+function hasChangeSummary() {
+  return Boolean(document.querySelector("#change-summary-root .change-summary"));
+}
+
+function quizBinWizardOpen() {
+  return Boolean(document.querySelector("#quiz-bin-view [data-qb-wizard]"));
+}
+
+function quizBinReportVisible() {
+  return (
+    Boolean(document.querySelector("#quiz-bin-view .qb-detail-head")) &&
+    !quizBinWizardOpen()
+  );
+}
+
+function activeQuizBinTab() {
+  const tab = document.querySelector("#quiz-bin-view .qb-tab.active");
+  return tab ? tab.textContent.trim() : "";
 }
 
 export const TUTORIAL_STEPS = Object.freeze([
   {
     id: "welcome",
     title: "Welcome to the guided demo",
-    body: "This is a hands-off tour of AiDaptable. It runs on a temporary copy of a semester, so your real workspace and saved data stay untouched. Use Next and Back to move around, Skip to jump to the end, or Exit to leave at any time.",
+    body: "This tour is hands-on. You will edit the setup, generate a schedule, act on a calendar day, and import a sample CSV into Quiz Bin. It all runs on a temporary copy of a semester, so your real workspace and saved data stay untouched. The card tells you what to do and marks each task done when it detects the change. Use Next, Back, Skip tour, or Exit at any time.",
     placement: "center",
     nextLabel: "Start tour"
   },
   {
     id: "workspaces",
     title: "Three connected workspaces",
-    body: "Setup is where you define the semester, topics, and quizzes. Calendar turns those rules into a teaching plan. Quiz Bin turns Google Forms CSV exports into class insights. The tabs at the top switch between them.",
+    body: "Setup is where you define the semester, topics, and quizzes. Calendar turns those rules into a teaching plan. Quiz Bin turns Google Forms CSV exports into class insights. The tabs at the top switch between them; the tour switches for you as it moves.",
     view: "setup",
     target: ".view-tabs",
     shape: "pill",
@@ -38,7 +66,7 @@ export const TUTORIAL_STEPS = Object.freeze([
   {
     id: "semester",
     title: "Set the rules for the semester",
-    body: "Start and end dates are hard boundaries. Class days and their time windows decide how much teaching time exists. The low-priority threshold controls when a topic with no room becomes asynchronous instead of unscheduled. This demo uses Mon/Wed/Fri, 9:00–12:00, with one holiday.",
+    body: "Start and end dates are hard boundaries. Class days and their time windows decide how much teaching time exists. The low-priority threshold controls when a topic with no room becomes asynchronous instead of unscheduled. This demo uses Mon/Wed/Fri, 9:00–12:00, with one suspended day.",
     view: "setup",
     target: '#setup-view [data-tutorial="semester"] .card-header',
     shape: "rect",
@@ -46,19 +74,29 @@ export const TUTORIAL_STEPS = Object.freeze([
     placement: "below"
   },
   {
-    id: "topics",
-    title: "Topics carry the plan",
-    body: "Each topic has estimated hours, a priority, and optional prerequisites. The scheduler finishes prerequisites first and uses priority to share shortages fairly. Topic rows are edited as one batch, then saved together.",
+    id: "topics-edit",
+    title: "Edit a topic, then save the batch",
+    body: "Topic rows are edited together. Change the Fractions estimate from 24 hours to 21 hours and save the batch. The setup auto-saves in normal use; in this tour it only changes the temporary copy. Saving also marks the generated schedule stale, so the next step regenerates it.",
     view: "setup",
-    target: '#setup-view [data-tutorial="topics"] .card-header',
+    target: () =>
+      document.querySelector(
+        '[data-topic-row][data-topic-id="t2"] [data-topic-field="hours"]'
+      ),
     shape: "rect",
-    padding: 10,
-    placement: "below"
+    padding: 8,
+    placement: "left",
+    interactive: true,
+    task: {
+      instruction: "Set Fractions to 21 hours, then click Save Topic Changes.",
+      hint: "Find the Fractions row under Topics, change its Hours field to 21, then click Save Topic Changes in that card's header.",
+      isComplete: ({ state }) =>
+        state?.topics?.find((topic) => topic.id === "t2")?.estimatedHours === 21
+    }
   },
   {
     id: "quizzes",
     title: "Reserve quiz days and track coverage",
-    body: "A quiz reserves a class day and records which topics it covers. If those topics are not fully scheduled before the quiz date, the app warns you and can move the quiz automatically when the coverage is complete. This demo has two checkpoints.",
+    body: "A quiz reserves a class day and records which topics it covers. If those topics are not fully scheduled before the quiz date, the app warns you and can move the quiz automatically. This demo has Checkpoint 1 on October 2 and Checkpoint 2 on November 6.",
     view: "setup",
     target: '#setup-view [data-tutorial="quizzes"] .card-header',
     shape: "rect",
@@ -68,33 +106,89 @@ export const TUTORIAL_STEPS = Object.freeze([
   {
     id: "generate",
     title: "Generate the schedule",
-    body: "Generate Schedule uses dependency order, quiz deadlines, priority, and 30-minute floors to place every topic. In normal use it saves the setup and opens the Calendar. In this tour the result stays temporary and nothing is written.",
+    body: "Generate Schedule uses dependency order, quiz deadlines, priority, and 30-minute floors to place every topic. It also saves the setup and opens Calendar. Here the result stays temporary. Click the button and the tour will continue on the calendar.",
     view: "setup",
     target: '#setup-view [data-tutorial="generate"]',
     shape: "pill",
     padding: 8,
-    placement: "above"
+    placement: "above",
+    interactive: true,
+    task: {
+      instruction: "Click Generate Schedule.",
+      hint: "The button is in the Schedule card at the bottom of Setup.",
+      isComplete: () =>
+        !document.getElementById("calendar-view")?.classList.contains("hidden"),
+      autoAdvance: true
+    }
   },
   {
     id: "calendar-toolbar",
-    title: "Move around the calendar",
-    body: "Switch between month and week, jump to a date, or return to Today. Suspend Range blocks out lost class time and reflows the affected work. Reschedule Remaining retries unfinished topics from a date you choose.",
+    title: "Navigate the calendar",
+    body: "The toolbar moves between months and weeks, jumps to a date, and switches views. Try it now: click Week, then click Month. Suspend Range blocks out lost class time and reflows the affected work. Reschedule Remaining retries unfinished topics from a date you choose.",
     view: "calendar",
-    target: "#calendar-toolbar",
-    shape: "rect",
-    padding: 8,
-    placement: "below"
+    target: "#calendar-toolbar .segmented",
+    shape: "pill",
+    padding: 6,
+    placement: "below",
+    interactive: true,
+    task: {
+      instruction: "Switch to Week view, then back to Month view.",
+      hint: "Use the Month and Week buttons in the calendar toolbar.",
+      onEvent: ({ event, context }) => {
+        const action = event.target
+          ?.closest?.("[data-cal-action]")
+          ?.getAttribute("data-cal-action");
+        if (action === "view-week") {
+          context.sawWeek = true;
+        }
+      },
+      isComplete: ({ context }) => {
+        const mode = calendarGridMode();
+        if (mode === "week") {
+          context.sawWeek = true;
+        }
+        return context.sawWeek === true && mode === "month";
+      }
+    }
   },
   {
     id: "calendar-day",
-    title: "Read a teaching day",
-    body: "Each colored block is a scheduled topic with its hours. Quiz days, suspended days, and open class days get their own flags. After the tour, click any day to add time, remove a topic, suspend the day, or inspect what is planned.",
+    title: "Act on a calendar day",
+    body: "November 30 is suspended for Bonifacio Day. Open that day and choose Remove suspension. The scheduler will reflow the remaining work immediately. This is a real calendar change, but it only touches the temporary tour copy.",
     view: "calendar",
     target: () =>
-      firstMatchingDay((day) => Boolean(day.querySelector(".topic-pill"))),
+      document.querySelector("#popover-root .day-popover") ||
+      calendarDay("2026-11-30"),
     shape: "rect",
     padding: 6,
-    placement: "auto"
+    placement: "auto",
+    interactive: true,
+    task: {
+      instruction: "Open November 30, then choose Remove suspension.",
+      hint: "Click the highlighted November 30 cell, then use the Remove suspension button in the day panel.",
+      isComplete: ({ state }) => {
+        const cell = state?.calendar?.find(
+          (entry) => entry.date === "2026-11-30"
+        );
+        return Boolean(cell) && !cell.suspended;
+      }
+    }
+  },
+  {
+    id: "calendar-summary",
+    title: "Review the change summary",
+    body: "Calendar edits stay pending until you accept them. This panel lists what the reflow moved, completed, or adjusted. Click Accept & Save to keep the change for the rest of the tour, or Undo Changes to roll it back. Either choice closes the panel so the tour can continue.",
+    view: "calendar",
+    target: "#change-summary-root .change-summary",
+    shape: "rect",
+    padding: 8,
+    placement: "left",
+    interactive: true,
+    task: {
+      instruction: "Click Accept & Save or Undo Changes.",
+      hint: "Use the buttons at the bottom of the change summary panel.",
+      isComplete: () => !hasChangeSummary()
+    }
   },
   {
     id: "async-sidebar",
@@ -109,7 +203,7 @@ export const TUTORIAL_STEPS = Object.freeze([
   {
     id: "header-actions",
     title: "Save, undo, and start over",
-    body: "Undo restores the previous change, Discard returns to the last accepted state, and Accept & Save commits pending calendar edits. Load Demo still loads the built-in demo semester; Guided Demo is the separate tour you are in now. These controls are paused while the tour runs.",
+    body: "Undo restores the previous change, Discard returns to the last accepted state, and Accept & Save commits pending calendar edits. The header is paused during the tour so the tour can restore your workspace. Load Demo still loads the built-in demo semester; Guided Demo is this separate tour.",
     view: "calendar",
     target: ".header-actions",
     shape: "rect",
@@ -117,9 +211,52 @@ export const TUTORIAL_STEPS = Object.freeze([
     placement: "below"
   },
   {
+    id: "quiz-bin-import",
+    title: "Import a real CSV into Quiz Bin",
+    body: "Quiz Bin reads the CSV from a Google Forms response sheet. Click Import CSV to choose a file, or use the sample on this card. The sample matches Checkpoint 1: six anonymous responses, three questions, and a known answer key. The import runs through the real wizard; only persistence is disabled.",
+    view: "quiz-bin",
+    target: '#quiz-bin-view [data-qb-action="upload"]',
+    shape: "pill",
+    padding: 7,
+    placement: "below",
+    interactive: true,
+    action: {
+      id: "use-sample-csv",
+      label: "Use sample CSV"
+    },
+    download: {
+      href: "examples/checkpoint-1-responses.csv",
+      label: "Download sample CSV"
+    },
+    task: {
+      instruction: "Open the import wizard with your CSV or the sample.",
+      hint: "Click Import CSV in the Quiz Bin header, or use the Use sample CSV button on this card.",
+      isComplete: () => quizBinWizardOpen() || quizBinReportVisible(),
+      autoAdvance: true
+    }
+  },
+  {
+    id: "quiz-bin-wizard",
+    title: "Check what was detected",
+    body: "The wizard pairs each question with its score column, infers the answer key from full-credit responses, ignores names and emails, and links the import to Checkpoint 1. Review the chips and warnings, then import the responses.",
+    view: "quiz-bin",
+    target:
+      '#quiz-bin-view .qb-wizard-actions [data-qb-action="wizard-import"]',
+    shape: "pill",
+    padding: 7,
+    placement: "above",
+    interactive: true,
+    task: {
+      instruction: "Review the detected questions, then click the import button.",
+      hint: "The import button is at the bottom of the import check.",
+      isComplete: () => quizBinReportVisible(),
+      autoAdvance: true
+    }
+  },
+  {
     id: "quiz-bin-report",
-    title: "Quiz Bin turns exports into reports",
-    body: "Quiz Bin reads the CSV from a Google Forms response sheet. This temporary report was built from six anonymous responses: names and IDs are ignored, answers are graded, and correct answers are inferred from full-credit responses. Real imports are stored separately from the scheduler.",
+    title: "Read the class report",
+    body: "The temporary report shows the class average, pass rate, score distribution, frequently missed questions, and the responses that need attention. Correct answers were inferred from full-credit responses, and names and emails were dropped. Everything stays in this browser.",
     view: "quiz-bin",
     target: "#quiz-bin-view .qb-detail-head .card-header",
     shape: "rect",
@@ -129,17 +266,23 @@ export const TUTORIAL_STEPS = Object.freeze([
   {
     id: "quiz-bin-tabs",
     title: "Explore the report",
-    body: "Overview summarizes the class, Questions shows answer distributions and inferred keys, and Responses lists anonymous scores with a detail drawer. Import notes explains warnings and grading mode, and Export downloads the report data.",
+    body: "Overview summarizes the class. Questions shows answer distributions and the inferred key. Responses lists anonymous scores with a detail drawer. Import notes explains warnings and grading mode, and Export downloads the report data. Open Questions to see the question-level view.",
     view: "quiz-bin",
     target: "#quiz-bin-view .qb-tabs",
     shape: "pill",
     padding: 6,
-    placement: "below"
+    placement: "below",
+    interactive: true,
+    task: {
+      instruction: "Open the Questions tab.",
+      hint: "Click Questions in the report tabs.",
+      isComplete: () => activeQuizBinTab() === "Questions"
+    }
   },
   {
     id: "finish",
-    title: "You have seen the whole workspace",
-    body: "That is the full loop: set up the semester, generate and adjust the calendar, then use Quiz Bin to learn from quiz results. Finish the tour to return to your own workspace exactly as you left it. Nothing from this tour was saved.",
+    title: "You have seen the whole loop",
+    body: "You edited setup, regenerated the schedule, changed a calendar day, reviewed the reflow, and imported a CSV into Quiz Bin. Finish the tour to return to your own workspace exactly as you left it. Nothing from this tour was saved.",
     placement: "center",
     nextLabel: "Finish tour"
   }
@@ -184,6 +327,26 @@ function buildMarkup(steps) {
       </div>
       <h2 id="tutorial-title" data-tutorial-title></h2>
       <p class="tutorial-body" data-tutorial-body></p>
+      <div class="tutorial-task" data-tutorial-task hidden>
+        <div class="tutorial-task-head">
+          <span class="tutorial-task-kicker">Your turn</span>
+          <span
+            class="tutorial-task-state"
+            data-tutorial-task-state
+            aria-live="polite"
+          >Waiting</span>
+        </div>
+        <p class="tutorial-task-text" data-tutorial-task-text></p>
+        <p class="tutorial-task-hint" data-tutorial-task-hint hidden></p>
+        <div class="tutorial-task-actions" data-tutorial-task-actions hidden>
+          <button
+            class="btn small subtle"
+            type="button"
+            data-tutorial-task-button
+          ></button>
+          <a class="tutorial-task-download" data-tutorial-download download hidden></a>
+        </div>
+      </div>
       <div class="tutorial-progress" data-tutorial-progress aria-hidden="true">
         ${steps.map(() => `<span class="tutorial-dot"></span>`).join("")}
       </div>
@@ -202,7 +365,9 @@ function buildMarkup(steps) {
 export function createTutorialController({
   steps = TUTORIAL_STEPS,
   onViewChange = () => {},
-  onFinish = () => {}
+  onFinish = () => {},
+  onAction = () => {},
+  getState = () => null
 } = {}) {
   let active = false;
   let index = 0;
@@ -220,29 +385,47 @@ export function createTutorialController({
   let nextButton = null;
   let skipButton = null;
   let exitButton = null;
+  let taskPanel = null;
+  let taskState = null;
+  let taskText = null;
+  let taskHint = null;
+  let taskActions = null;
+  let taskButton = null;
+  let taskDownload = null;
   let previousFocus = null;
   let repositionFrame = 0;
-  const inertedRegions = [];
+  let taskTimer = 0;
+  let advanceTimer = 0;
+  let nudgeTimer = 0;
+  let taskContext = {};
+  let taskDone = false;
+  let lastTaskTarget = null;
 
   function setAppInert(enabled) {
+    const header = document.querySelector(".app-header");
+    const main = document.getElementById("app-main");
     if (enabled) {
-      inertedRegions.length = 0;
-      const regions = [
-        document.querySelector(".app-header"),
-        document.getElementById("app-main")
-      ];
-      for (const region of regions) {
-        if (region && !region.hasAttribute("inert")) {
-          region.setAttribute("inert", "");
-          inertedRegions.push(region);
-        }
-      }
-      return;
+      header?.setAttribute("inert", "");
+      main?.setAttribute("inert", "");
+    } else {
+      header?.removeAttribute("inert");
+      main?.removeAttribute("inert");
     }
-    for (const region of inertedRegions) {
-      region.removeAttribute("inert");
+  }
+
+  function applyInteractionMode(step) {
+    const interactive = Boolean(step.interactive);
+    document.body.classList.toggle("tutorial-interactive", interactive);
+    const header = document.querySelector(".app-header");
+    const main = document.getElementById("app-main");
+    header?.setAttribute("inert", "");
+    if (interactive) {
+      main?.removeAttribute("inert");
+      card.removeAttribute("aria-modal");
+    } else {
+      main?.setAttribute("inert", "");
+      card.setAttribute("aria-modal", "true");
     }
-    inertedRegions.length = 0;
   }
 
   function ensureDom() {
@@ -266,11 +449,33 @@ export function createTutorialController({
     nextButton = root.querySelector('[data-tutorial-action="next"]');
     skipButton = root.querySelector('[data-tutorial-action="skip"]');
     exitButton = root.querySelector('[data-tutorial-action="exit"]');
+    taskPanel = root.querySelector("[data-tutorial-task]");
+    taskState = root.querySelector("[data-tutorial-task-state]");
+    taskText = root.querySelector("[data-tutorial-task-text]");
+    taskHint = root.querySelector("[data-tutorial-task-hint]");
+    taskActions = root.querySelector("[data-tutorial-task-actions]");
+    taskButton = root.querySelector("[data-tutorial-task-button]");
+    taskDownload = root.querySelector("[data-tutorial-download]");
 
     backButton.addEventListener("click", goBack);
-    nextButton.addEventListener("click", goNext);
+    nextButton.addEventListener("click", requestNext);
     skipButton.addEventListener("click", skipToEnd);
     exitButton.addEventListener("click", () => finish("exit"));
+    taskButton.addEventListener("click", () => {
+      const step = steps[index];
+      if (active && step?.action?.id) {
+        onAction(step.action.id, step);
+      }
+    });
+  }
+
+  function updateNextLabel(step) {
+    const isLast = index === steps.length - 1;
+    if (step.task && !taskDone) {
+      nextButton.textContent = "Check task";
+    } else {
+      nextButton.textContent = isLast ? "Finish tour" : step.nextLabel || "Next";
+    }
   }
 
   function updateCard(step) {
@@ -278,13 +483,119 @@ export function createTutorialController({
     body.textContent = step.body;
     counter.textContent = `Step ${index + 1} of ${steps.length}`;
     backButton.disabled = index === 0;
-    nextButton.textContent =
-      index === steps.length - 1 ? "Finish tour" : step.nextLabel || "Next";
     skipButton.hidden = index === steps.length - 1;
     progress.querySelectorAll(".tutorial-dot").forEach((dot, dotIndex) => {
       dot.classList.toggle("active", dotIndex === index);
       dot.classList.toggle("complete", dotIndex < index);
     });
+    card.classList.toggle("is-interactive", Boolean(step.interactive));
+
+    if (step.task) {
+      taskPanel.hidden = false;
+      taskPanel.classList.remove("is-complete", "is-nudged");
+      taskState.textContent = "Waiting";
+      taskText.textContent = step.task.instruction || "";
+      taskHint.textContent =
+        step.task.hint || "Finish the task above, then try again.";
+      taskHint.hidden = true;
+      const hasAction = Boolean(step.action || step.download);
+      taskActions.hidden = !hasAction;
+      if (step.action) {
+        taskButton.hidden = false;
+        taskButton.textContent = step.action.label || "Open";
+      } else {
+        taskButton.hidden = true;
+      }
+      if (step.download) {
+        taskDownload.hidden = false;
+        taskDownload.href = step.download.href;
+        taskDownload.textContent = step.download.label || "Download sample";
+      } else {
+        taskDownload.hidden = true;
+        taskDownload.removeAttribute("href");
+      }
+    } else {
+      taskPanel.hidden = true;
+      taskActions.hidden = true;
+    }
+    updateNextLabel(step);
+  }
+
+  function markTaskComplete(step) {
+    taskDone = true;
+    taskHint.hidden = true;
+    taskPanel.classList.add("is-complete");
+    taskState.textContent = "Done";
+    updateNextLabel(step);
+  }
+
+  function showTaskHint(step) {
+    if (!step.task) {
+      return;
+    }
+    taskHint.hidden = false;
+    taskPanel.classList.remove("is-nudged");
+    void taskPanel.offsetWidth;
+    taskPanel.classList.add("is-nudged");
+    window.clearTimeout(nudgeTimer);
+    nudgeTimer = window.setTimeout(() => {
+      taskPanel?.classList.remove("is-nudged");
+    }, 700);
+    scheduleReposition();
+  }
+
+  function checkTask(step) {
+    if (!step.task) {
+      return true;
+    }
+    try {
+      return Boolean(
+        step.task.isComplete({
+          state: getState(),
+          context: taskContext,
+          step
+        })
+      );
+    } catch {
+      return false;
+    }
+  }
+
+  function stopTaskTimers() {
+    window.clearInterval(taskTimer);
+    window.clearTimeout(advanceTimer);
+    window.clearTimeout(nudgeTimer);
+    taskTimer = 0;
+    advanceTimer = 0;
+    nudgeTimer = 0;
+  }
+
+  function startTaskPolling(step) {
+    stopTaskTimers();
+    if (!step.task) {
+      return;
+    }
+    lastTaskTarget = resolveTarget(step);
+    taskTimer = window.setInterval(() => {
+      if (!active || steps[index] !== step) {
+        return;
+      }
+      const target = resolveTarget(step);
+      if (target && target !== lastTaskTarget) {
+        lastTaskTarget = target;
+        positionStep(step, target);
+      }
+      if (!taskDone && checkTask(step)) {
+        markTaskComplete(step);
+        if (step.task.autoAdvance) {
+          advanceTimer = window.setTimeout(() => {
+            if (active && steps[index] === step) {
+              goTo(index + 1);
+            }
+          }, AUTO_ADVANCE_MS);
+        }
+      }
+    }, TASK_POLL_MS);
   }
 
   function spotlightRect(target, step) {
@@ -327,7 +638,8 @@ export function createTutorialController({
       (placement === "below" || placement === "above" ? cardHeight : cardWidth) +
         CARD_GAP +
         VIEWPORT_MARGIN;
-    const preferred = step.placement && step.placement !== "auto" ? step.placement : null;
+    const preferred =
+      step.placement && step.placement !== "auto" ? step.placement : null;
     if (preferred && fits(preferred)) {
       return preferred;
     }
@@ -339,7 +651,9 @@ export function createTutorialController({
     if (preferred) {
       return preferred;
     }
-    return Object.entries(space).sort((left, right) => right[1] - left[1])[0][0];
+    return Object.entries(space).sort(
+      (left, right) => right[1] - left[1]
+    )[0][0];
   }
 
   function placeCard(step, targetRect) {
@@ -369,8 +683,16 @@ export function createTutorialController({
       top = targetCenterY - cardHeight / 2;
     }
 
-    left = clamp(left, VIEWPORT_MARGIN, window.innerWidth - cardWidth - VIEWPORT_MARGIN);
-    top = clamp(top, VIEWPORT_MARGIN, window.innerHeight - cardHeight - VIEWPORT_MARGIN);
+    left = clamp(
+      left,
+      VIEWPORT_MARGIN,
+      window.innerWidth - cardWidth - VIEWPORT_MARGIN
+    );
+    top = clamp(
+      top,
+      VIEWPORT_MARGIN,
+      window.innerHeight - cardHeight - VIEWPORT_MARGIN
+    );
     card.style.left = `${Math.round(left)}px`;
     card.style.top = `${Math.round(top)}px`;
     card.dataset.placement = placement;
@@ -413,7 +735,11 @@ export function createTutorialController({
       spotlight.style.width = `${Math.round(targetRect.width)}px`;
       spotlight.style.height = `${Math.round(targetRect.height)}px`;
       spotlight.style.borderRadius =
-        step.shape === "circle" ? "50%" : step.shape === "pill" ? "999px" : "16px";
+        step.shape === "circle"
+          ? "50%"
+          : step.shape === "pill"
+            ? "999px"
+            : "16px";
       spotlight.classList.remove("hidden");
       scrim.classList.add("hidden");
     } else {
@@ -431,8 +757,14 @@ export function createTutorialController({
     if (step.view) {
       onViewChange(step.view);
     }
+    stopTaskTimers();
+    taskContext = {};
+    taskDone = false;
+    lastTaskTarget = null;
     updateCard(step);
+    applyInteractionMode(step);
     const target = resolveTarget(step);
+    lastTaskTarget = target;
     if (target && scroll) {
       const rect = target.getBoundingClientRect();
       if (rect.top < 72 || rect.bottom > window.innerHeight - 72) {
@@ -440,6 +772,13 @@ export function createTutorialController({
       }
     }
     positionStep(step, target);
+    if (step.task) {
+      taskDone = checkTask(step);
+      if (taskDone) {
+        markTaskComplete(step);
+      }
+      startTaskPolling(step);
+    }
     card.classList.add("is-visible");
     card.focus({ preventScroll: true });
   }
@@ -452,11 +791,24 @@ export function createTutorialController({
     if (bounded === index) {
       return;
     }
+    stopTaskTimers();
     index = bounded;
     renderStep({ scroll: true });
   }
 
-  function goNext() {
+  function requestNext() {
+    if (!active) {
+      return;
+    }
+    const step = steps[index];
+    if (step.task && !taskDone) {
+      if (checkTask(step)) {
+        markTaskComplete(step);
+      } else {
+        showTaskHint(step);
+        return;
+      }
+    }
     if (index === steps.length - 1) {
       finish(skipped ? "skipped" : "complete");
       return;
@@ -465,6 +817,9 @@ export function createTutorialController({
   }
 
   function goBack() {
+    if (index === 0) {
+      return;
+    }
     goTo(index - 1);
   }
 
@@ -473,6 +828,7 @@ export function createTutorialController({
       finish("skipped");
       return;
     }
+    stopTaskTimers();
     skipped = true;
     index = steps.length - 1;
     renderStep({ scroll: false });
@@ -492,30 +848,75 @@ export function createTutorialController({
     });
   }
 
+  function isEditableTarget(target) {
+    return (
+      target instanceof HTMLElement &&
+      Boolean(
+        target.closest("input, select, textarea, [contenteditable='true']")
+      )
+    );
+  }
+
+  function handleDocumentClick(event) {
+    if (!active) {
+      return;
+    }
+    const step = steps[index];
+    if (!step?.task?.onEvent) {
+      return;
+    }
+    try {
+      step.task.onEvent({
+        event,
+        context: taskContext,
+        state: getState(),
+        step
+      });
+    } catch {
+      // Ignore tracking failures; the polling check remains authoritative.
+    }
+  }
+
   function handleKeydown(event) {
     if (!active) {
       return;
     }
     if (event.key === "Escape") {
+      if (
+        document.getElementById("app-modal")?.open ||
+        document.querySelector("#popover-root .day-popover") ||
+        isEditableTarget(event.target)
+      ) {
+        return;
+      }
       event.preventDefault();
       finish("exit");
       return;
     }
-    if (event.key === "ArrowRight") {
+    if (event.key === "ArrowRight" || event.key === "ArrowLeft") {
+      if (!card.contains(document.activeElement) || isEditableTarget(event.target)) {
+        return;
+      }
       event.preventDefault();
-      goNext();
-      return;
-    }
-    if (event.key === "ArrowLeft") {
-      event.preventDefault();
-      goBack();
+      if (event.key === "ArrowRight") {
+        requestNext();
+      } else {
+        goBack();
+      }
       return;
     }
     if (event.key !== "Tab") {
       return;
     }
-    const focusable = [...card.querySelectorAll("button:not([disabled]):not([hidden])")]
-      .filter((element) => element.offsetParent !== null);
+    const step = steps[index];
+    if (step.interactive) {
+      return;
+    }
+    const focusable = [
+      ...card.querySelectorAll(
+        "button:not([disabled]):not([hidden]), a[href]:not([hidden])"
+      )
+    ].filter((element) => element.offsetParent !== null);
     if (!focusable.length) {
       return;
     }
@@ -526,7 +927,10 @@ export function createTutorialController({
       first.focus();
       return;
     }
-    if (event.shiftKey && (document.activeElement === first || document.activeElement === card)) {
+    if (
+      event.shiftKey &&
+      (document.activeElement === first || document.activeElement === card)
+    ) {
       event.preventDefault();
       last.focus();
     } else if (!event.shiftKey && document.activeElement === last) {
@@ -539,8 +943,10 @@ export function createTutorialController({
     window.removeEventListener("resize", scheduleReposition);
     window.removeEventListener("scroll", scheduleReposition, true);
     document.removeEventListener("keydown", handleKeydown, true);
+    document.removeEventListener("click", handleDocumentClick);
     window.cancelAnimationFrame(repositionFrame);
-    document.body.classList.remove("tutorial-active");
+    stopTaskTimers();
+    document.body.classList.remove("tutorial-active", "tutorial-interactive");
     setAppInert(false);
     root?.remove();
     root = null;
@@ -556,6 +962,16 @@ export function createTutorialController({
     nextButton = null;
     skipButton = null;
     exitButton = null;
+    taskPanel = null;
+    taskState = null;
+    taskText = null;
+    taskHint = null;
+    taskActions = null;
+    taskButton = null;
+    taskDownload = null;
+    taskContext = {};
+    taskDone = false;
+    lastTaskTarget = null;
   }
 
   function finish(reason) {
@@ -583,13 +999,15 @@ export function createTutorialController({
     skipped = false;
     index = 0;
     previousFocus =
-      document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
     ensureDom();
     document.body.classList.add("tutorial-active");
-    setAppInert(true);
     window.addEventListener("resize", scheduleReposition);
     window.addEventListener("scroll", scheduleReposition, true);
     document.addEventListener("keydown", handleKeydown, true);
+    document.addEventListener("click", handleDocumentClick);
     renderStep({ scroll: true });
   }
 
