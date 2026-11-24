@@ -67,6 +67,19 @@ test("interactive tasks recognize the expected temporary state", () => {
   );
 });
 
+test("topic editing keeps the save control reachable from the tour card", () => {
+  const step = TUTORIAL_STEPS.find((entry) => entry.id === "topics-edit");
+
+  assert.equal(step.placement, "right");
+  assert.equal(step.cardWidth, 360);
+  assert.deepEqual(step.action, {
+    id: "save-topics",
+    label: "Save Topic Changes"
+  });
+  assert.match(step.task.instruction, /Save Topic Changes on this card/);
+  assert.match(step.task.hint, /bottom of this card/);
+});
+
 test("Quiz Bin import steps expose the sample CSV and completion actions", () => {
   const importStep = TUTORIAL_STEPS.find(
     (step) => step.id === "quiz-bin-import"

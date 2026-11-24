@@ -76,7 +76,7 @@ export const TUTORIAL_STEPS = Object.freeze([
   {
     id: "topics-edit",
     title: "Edit a topic, then save the batch",
-    body: "Topic rows are edited together. Change the Fractions estimate from 24 hours to 21 hours and save the batch. The setup auto-saves in normal use; in this tour it only changes the temporary copy. Saving also marks the generated schedule stale, so the next step regenerates it.",
+    body: "Topic rows are edited together and saved as one batch. Change the Fractions estimate from 24 hours to 21 hours, then click Save Topic Changes on this card. In this tour it only updates the temporary copy. Saving also marks the generated schedule stale, so the next step regenerates it.",
     view: "setup",
     target: () =>
       document.querySelector(
@@ -84,11 +84,16 @@ export const TUTORIAL_STEPS = Object.freeze([
       ),
     shape: "rect",
     padding: 8,
-    placement: "left",
+    placement: "right",
+    cardWidth: 360,
     interactive: true,
+    action: {
+      id: "save-topics",
+      label: "Save Topic Changes"
+    },
     task: {
-      instruction: "Set Fractions to 21 hours, then click Save Topic Changes.",
-      hint: "Find the Fractions row under Topics, change its Hours field to 21, then click Save Topic Changes in that card's header.",
+      instruction: "Set Fractions to 21 hours, then click Save Topic Changes on this card.",
+      hint: "Change the Hours field in the Fractions row. Then click the Save Topic Changes button at the bottom of this card.",
       isComplete: ({ state }) =>
         state?.topics?.find((topic) => topic.id === "t2")?.estimatedHours === 21
     }
@@ -340,7 +345,7 @@ function buildMarkup(steps) {
         <p class="tutorial-task-hint" data-tutorial-task-hint hidden></p>
         <div class="tutorial-task-actions" data-tutorial-task-actions hidden>
           <button
-            class="btn small subtle"
+            class="btn small primary"
             type="button"
             data-tutorial-task-button
           ></button>
@@ -728,6 +733,14 @@ export function createTutorialController({
   }
 
   function positionStep(step, target) {
+    if (Number.isFinite(step.cardWidth) && step.cardWidth > 0) {
+      card.style.width = `${Math.min(
+        step.cardWidth,
+        window.innerWidth - VIEWPORT_MARGIN * 2
+      )}px`;
+    } else {
+      card.style.removeProperty("width");
+    }
     const targetRect = spotlightRect(target, step);
     if (targetRect) {
       spotlight.style.left = `${Math.round(targetRect.left)}px`;

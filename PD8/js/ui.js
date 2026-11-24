@@ -2818,6 +2818,8 @@ function initTutorial() {
           name: TUTORIAL_QUIZ_CSV_FILE_NAME,
           text: TUTORIAL_QUIZ_CSV_TEXT
         });
+      } else if (actionId === "save-topics") {
+        saveTopicDrafts();
       }
     },
     onFinish: (reason) => exitTutorial(reason)
